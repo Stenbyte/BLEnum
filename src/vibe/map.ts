@@ -1,5 +1,11 @@
 import type { BleSighting } from '../signals/types'
 
+/** Default “near Mac” gate (dBm). Above = unlock paint. */
+export const DEFAULT_NEAR_RSSI = -65
+
+/** Soft ramp width above the gate (dBm). */
+export const NEAR_RAMP_DB = 20
+
 export type HslColor = {
   h: number
   s: number
@@ -7,11 +13,13 @@ export type HslColor = {
 }
 
 export type VibeState = {
-  /** 0 = cool/quiet, 1 = warm/crowded */
+  /** 0 = cool/quiet, 1 = warm/crowded (near devices only) */
   warmth: number
   deviceCount: number
+  nearCount: number
+  nearRssi: number
   averageRssi: number
-  /** Per-device breath factor from RSSI (0..1+) */
+  /** Per-device breath factor from proximity (0 = too far) */
   breathByDevice: Map<string, number>
 }
 
@@ -21,28 +29,47 @@ export function warmthFromCount(count: number, cap: number): number {
   return Math.min(1, count / cap)
 }
 
-/** Map RSSI to fill/breath strength. */
-export function strengthFromRssi(rssi: number): number {
-  // -100..-40 → 0..1
-  return Math.max(0, Math.min(1, (rssi + 100) / 60))
+/** True when RSSI is at/above the near gate. */
+export function isNear(rssi: number, nearRssi = DEFAULT_NEAR_RSSI): boolean {
+  return rssi >= nearRssi
 }
 
-export function computeVibe(sightings: BleSighting[], deviceCap: number): VibeState {
+/**
+ * Map RSSI to fill/breath strength with a soft near gate.
+ * Below nearRssi → 0; ramps to 1 over NEAR_RAMP_DB above the gate.
+ */
+export function strengthFromRssi(
+  rssi: number,
+  nearRssi = DEFAULT_NEAR_RSSI,
+): number {
+  if (rssi < nearRssi) return 0
+  return Math.max(0, Math.min(1, (rssi - nearRssi) / NEAR_RAMP_DB))
+}
+
+export function computeVibe(
+  sightings: BleSighting[],
+  deviceCap: number,
+  nearRssi = DEFAULT_NEAR_RSSI,
+): VibeState {
   const deviceCount = sightings.length
-  const warmth = warmthFromCount(deviceCount, deviceCap)
+  const near = sightings.filter((s) => isNear(s.rssi, nearRssi))
+  const nearCount = near.length
+  const warmth = warmthFromCount(nearCount, deviceCap)
   const averageRssi =
-    deviceCount === 0
+    nearCount === 0
       ? -90
-      : sightings.reduce((sum, s) => sum + s.rssi, 0) / deviceCount
+      : near.reduce((sum, s) => sum + s.rssi, 0) / nearCount
 
   const breathByDevice = new Map<string, number>()
   for (const s of sightings) {
-    breathByDevice.set(s.id, strengthFromRssi(s.rssi))
+    breathByDevice.set(s.id, strengthFromRssi(s.rssi, nearRssi))
   }
 
   return {
     warmth,
     deviceCount,
+    nearCount,
+    nearRssi,
     averageRssi,
     breathByDevice,
   }

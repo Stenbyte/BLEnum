@@ -146,6 +146,31 @@ body {
   opacity: 0.88;
 }
 
+.mode-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.4rem;
+}
+
+.mode-toggle-3 {
+  grid-template-columns: 1fr 1fr 1fr;
+}
+
+.mode-toggle .mode-btn {
+  font-size: 0.78rem;
+  padding: 0.45rem 0.35rem;
+}
+
+.mode-btn.is-active {
+  background: var(--ink);
+  color: #fff;
+}
+
+.mode-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 canvas {
   display: block;
   width: 100%;
@@ -233,6 +258,14 @@ button:hover {
   align-items: center;
   padding: 0.3rem 0;
   border-top: 1px solid var(--line);
+}
+
+.device-list li.is-far {
+  opacity: 0.42;
+}
+
+.device-list li.is-near span:last-child {
+  font-weight: 600;
 }
 
 .swatch {

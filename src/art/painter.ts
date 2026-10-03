@@ -39,19 +39,27 @@ type RegionEnergy = {
   devices: number
 }
 
+function nearSightings(
+  sightings: BleSighting[],
+  vibe: VibeState,
+): BleSighting[] {
+  return sightings.filter((s) => (vibe.breathByDevice.get(s.id) ?? 0) > 0)
+}
+
 function energyByRegion(
   regions: Region[],
   sightings: BleSighting[],
   vibe: VibeState,
 ): Map<number, RegionEnergy> {
   const paintNumbers = listPaintNumbers(regions)
-  const keys = sightings.map((s) => deviceKey(s.id, s.manufacturerId))
+  const near = nearSightings(sightings, vibe)
+  const keys = near.map((s) => deviceKey(s.id, s.manufacturerId))
   const assigned = assignPaintsToDevices(keys, paintNumbers)
   const energy = new Map<number, RegionEnergy>()
 
-  for (const s of sightings) {
-    const paints = assigned.get(deviceKey(s.id, s.manufacturerId)) ?? []
+  for (const s of near) {
     const breath = vibe.breathByDevice.get(s.id) ?? 0
+    const paints = assigned.get(deviceKey(s.id, s.manufacturerId)) ?? []
     for (const r of regions) {
       if (!paints.includes(r.paintNumber)) continue
       const prev = energy.get(r.id) ?? { breath: 0, devices: 0 }
@@ -80,7 +88,8 @@ export function updatePaint(
 
     if (live) {
       const boost = live.devices > 1 ? 1.25 : 1
-      const rate = (0.25 + live.breath * 0.75) * boost
+      // Closer (higher breath) → faster reveal; breath 0 never reaches here
+      const rate = (0.15 + live.breath * 0.95) * boost
       state.reveal = Math.min(1, state.reveal + dt * rate)
       state.breath += (live.breath - state.breath) * Math.min(1, dt * 8)
       if (state.reveal > 0.15) state.claimed = true
@@ -186,14 +195,16 @@ export function deviceSwatch(
   vibe: VibeState,
   allSightings: BleSighting[],
 ): string {
+  const breath = vibe.breathByDevice.get(sighting.id) ?? 0
+  if (breath <= 0) return '#bbb'
   const paintNumbers = listPaintNumbers(regions)
-  const keys = allSightings.map((s) => deviceKey(s.id, s.manufacturerId))
+  const near = nearSightings(allSightings, vibe)
+  const keys = near.map((s) => deviceKey(s.id, s.manufacturerId))
   const paints =
     assignPaintsToDevices(keys, paintNumbers).get(
       deviceKey(sighting.id, sighting.manufacturerId),
     ) ?? []
   const region = regions.find((r) => r.paintNumber === paints[0])
   if (!region) return '#999'
-  const breath = vibe.breathByDevice.get(sighting.id) ?? 0.5
   return hslToCss(gradePaletteColor(region.baseColor, vibe.warmth * 0.35, breath))
 }

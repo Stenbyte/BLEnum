@@ -6,7 +6,11 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "bridge": "bash bridge/start.sh",
+    "bridge:install": "python3 -m pip install --user -r bridge/requirements.txt",
+    "bridge:node": "npm --prefix bridge start",
+    "bridge:node:install": "npm --prefix bridge install"
   },
   "devDependencies": {
     "typescript": "~5.9.3",
