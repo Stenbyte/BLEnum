@@ -7,30 +7,75 @@ export type HslColor = {
 }
 
 export type VibeState = {
+  /** 0 = cool/quiet, 1 = warm/crowded */
   warmth: number
   deviceCount: number
   averageRssi: number
-  globalSaturation: number
-  colorsByDevice: Map<string, HslColor>
+  /** Per-device breath factor from RSSI (0..1+) */
+  breathByDevice: Map<string, number>
 }
 
-function hashHue(id: string, manufacturerId?: number): number {
-  let h = manufacturerId ?? 0
-  for (let i = 0; i < id.length; i++) {
-    h = (h * 31 + id.charCodeAt(i)) >>> 0
+/** Quiet → cool; crowded → warm. Cap-aware. */
+export function warmthFromCount(count: number, cap: number): number {
+  if (cap <= 0) return 0
+  return Math.min(1, count / cap)
+}
+
+/** Map RSSI to fill/breath strength. */
+export function strengthFromRssi(rssi: number): number {
+  // -100..-40 → 0..1
+  return Math.max(0, Math.min(1, (rssi + 100) / 60))
+}
+
+export function computeVibe(sightings: BleSighting[], deviceCap: number): VibeState {
+  const deviceCount = sightings.length
+  const warmth = warmthFromCount(deviceCount, deviceCap)
+  const averageRssi =
+    deviceCount === 0
+      ? -90
+      : sightings.reduce((sum, s) => sum + s.rssi, 0) / deviceCount
+
+  const breathByDevice = new Map<string, number>()
+  for (const s of sightings) {
+    breathByDevice.set(s.id, strengthFromRssi(s.rssi))
   }
-  return h % 360
+
+  return {
+    warmth,
+    deviceCount,
+    averageRssi,
+    breathByDevice,
+  }
 }
 
-/** Quiet → cool blues; crowded → warm reds/oranges. */
-function warmthFromCount(count: number): number {
-  return Math.min(1, count / 12)
+/**
+ * Apply global warmth grade to a fixed palette color.
+ * Identity stays; mood shifts cool↔warm.
+ */
+export function gradePaletteColor(
+  base: HslColor,
+  warmth: number,
+  breath: number,
+): HslColor {
+  const coolPull = 210
+  const warmPull = 18
+  const target = warmth < 0.5 ? coolPull : warmPull
+  const h = lerpHue(base.h, target, warmth * 0.18)
+  const s = clamp(base.s * (0.55 + breath * 0.55) * (0.85 + warmth * 0.25), 8, 85)
+  const l = clamp(base.l * (0.88 + breath * 0.2) - warmth * 4, 22, 72)
+  return { h, s, l }
 }
 
-/** Weak RSSI → muted; strong → vivid. */
-function saturationFromRssi(rssi: number): number {
-  const t = (rssi + 100) / 60
-  return 20 + Math.max(0, Math.min(1, t)) * 70
+/** Desaturated outline fill for unrevealed look (near B&W). */
+export function outlineWash(warmth: number): string {
+  const h = 210 - warmth * 180
+  const s = 6 + warmth * 8
+  const l = 90 - warmth * 6
+  return `hsl(${h}, ${s}%, ${l}%)`
+}
+
+export function hslToCss({ h, s, l }: HslColor, alpha = 1): string {
+  return `hsla(${h.toFixed(1)}, ${s.toFixed(1)}%, ${l.toFixed(1)}%, ${alpha})`
 }
 
 function lerpHue(a: number, b: number, t: number): number {
@@ -38,46 +83,6 @@ function lerpHue(a: number, b: number, t: number): number {
   return (a + diff * t + 360) % 360
 }
 
-export function computeVibe(sightings: BleSighting[]): VibeState {
-  const deviceCount = sightings.length
-  const warmth = warmthFromCount(deviceCount)
-  const averageRssi =
-    deviceCount === 0
-      ? -90
-      : sightings.reduce((sum, s) => sum + s.rssi, 0) / deviceCount
-  const globalSaturation = saturationFromRssi(averageRssi)
-
-  const cool = 210
-  const warm = 15
-  const colorsByDevice = new Map<string, HslColor>()
-
-  for (const s of sightings) {
-    const baseHue = hashHue(s.id, s.manufacturerId)
-    const biased = lerpHue(baseHue, warmth < 0.5 ? cool : warm, warmth * 0.35)
-    colorsByDevice.set(s.id, {
-      h: biased,
-      s: saturationFromRssi(s.rssi),
-      l: 42 + (s.rssi + 100) * 0.25,
-    })
-  }
-
-  return {
-    warmth,
-    deviceCount,
-    averageRssi,
-    globalSaturation,
-    colorsByDevice,
-  }
-}
-
-export function hslToCss({ h, s, l }: HslColor, alpha = 1): string {
-  return `hsla(${h.toFixed(1)}, ${s.toFixed(1)}%, ${l.toFixed(1)}%, ${alpha})`
-}
-
-/** Background wash from vibe warmth. */
-export function vibeWash(vibe: VibeState): string {
-  const h = 210 - vibe.warmth * 195
-  const s = 18 + vibe.globalSaturation * 0.25
-  const l = 92 - vibe.warmth * 8
-  return `hsl(${h}, ${s}%, ${l}%)`
+function clamp(n: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, n))
 }

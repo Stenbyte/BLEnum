@@ -1,10 +1,16 @@
 import './style.css'
 import { createFakeSignalSource } from './signals/fake'
 import type { BleSighting } from './signals/types'
-import { computeVibe, hslToCss, vibeWash } from './vibe/map'
-import { createRegions } from './art/regions'
+import { computeVibe, hslToCss } from './vibe/map'
+import {
+  createRegions,
+  DEVICE_CAP,
+  listPaintNumbers,
+  paintsForDevice,
+} from './art/regions'
 import {
   createEmptyPaint,
+  deviceSwatch,
   drawCanvas,
   updatePaint,
 } from './art/painter'
@@ -16,10 +22,10 @@ app.innerHTML = `
   <header class="top">
     <div class="brand">
       <h1>BLEnum</h1>
-      <p>Unseen Frequencies — fake BLE signals fill a paint-by-numbers canvas.</p>
+      <p>Unseen Frequencies — blank numbered art fills from fake BLE unlocks.</p>
     </div>
     <div class="stats">
-      <div><span>Devices</span><strong id="stat-count">0</strong></div>
+      <div><span>Devices</span><strong id="stat-count">0</strong> / ${DEVICE_CAP}</div>
       <div><span>Warmth</span><strong id="stat-warmth">0%</strong></div>
       <div><span>Avg RSSI</span><strong id="stat-rssi">—</strong></div>
     </div>
@@ -31,18 +37,23 @@ app.innerHTML = `
     <aside class="panel">
       <h2>Fake signals</h2>
       <div class="control">
-        <label>Crowd size <strong id="crowd-val">4</strong></label>
-        <input id="crowd" type="range" min="0" max="12" value="4" />
+        <label>Crowd size <strong id="crowd-val">0</strong></label>
+        <input id="crowd" type="range" min="0" max="${DEVICE_CAP}" value="0" />
       </div>
       <div class="control">
-        <label>RSSI noise <strong id="noise-val">4</strong></label>
+        <label>RSSI shimmer <strong id="noise-val">4</strong></label>
         <input id="noise" type="range" min="0" max="16" step="0.5" value="4" />
       </div>
       <div class="actions">
         <button type="button" id="walk">Walk past</button>
         <button type="button" class="secondary" id="reset">Reset paint</button>
       </div>
-      <p class="hint">Step 1: simulated BLE only. Step 2 will swap in Chrome <code>requestLEScan</code>.</p>
+      <p class="hint">
+        Blank B&amp;W outlines start empty. Each device unlocks multiple paint numbers
+        from the fixed palette. Shimmer keeps fills breathing.
+      </p>
+      <h2>Palette</h2>
+      <ul class="device-list" id="palette"></ul>
       <h2>Live devices</h2>
       <ul class="device-list" id="devices"></ul>
     </aside>
@@ -56,16 +67,37 @@ let paint = createEmptyPaint(regions)
 let sightings: BleSighting[] = []
 let lastTs = performance.now()
 
-const source = createFakeSignalSource({ crowdSize: 4, rssiNoise: 4 })
+const source = createFakeSignalSource({
+  crowdSize: 0,
+  rssiNoise: 4,
+  deviceCap: DEVICE_CAP,
+})
 
 const crowdInput = document.querySelector<HTMLInputElement>('#crowd')!
 const noiseInput = document.querySelector<HTMLInputElement>('#noise')!
 const crowdVal = document.querySelector('#crowd-val')!
 const noiseVal = document.querySelector('#noise-val')!
 const devicesEl = document.querySelector('#devices')!
+const paletteEl = document.querySelector('#palette')!
 const statCount = document.querySelector('#stat-count')!
 const statWarmth = document.querySelector('#stat-warmth')!
 const statRssi = document.querySelector('#stat-rssi')!
+
+function renderPalette() {
+  const paints = listPaintNumbers(regions)
+  paletteEl.innerHTML = paints
+    .map((n) => {
+      const sample = regions.find((r) => r.paintNumber === n)!
+      const css = hslToCss(sample.baseColor)
+      const count = regions.filter((r) => r.paintNumber === n).length
+      return `<li>
+        <i class="swatch" style="background:${css}"></i>
+        <span>Paint ${n}</span>
+        <span>${count} blocks</span>
+      </li>`
+    })
+    .join('')
+}
 
 crowdInput.addEventListener('input', () => {
   const n = Number(crowdInput.value)
@@ -79,7 +111,10 @@ noiseInput.addEventListener('input', () => {
   source.setRssiNoise(n)
 })
 
-document.querySelector('#walk')!.addEventListener('click', () => source.walkPast())
+document.querySelector('#walk')!.addEventListener('click', () => {
+  source.walkPast()
+})
+
 document.querySelector('#reset')!.addEventListener('click', () => {
   paint = createEmptyPaint(regions)
 })
@@ -89,6 +124,7 @@ source.subscribe((next) => {
 })
 
 source.start()
+renderPalette()
 
 function resizeCanvas() {
   const wrap = canvas.parentElement!
@@ -103,16 +139,17 @@ function resizeCanvas() {
 resizeCanvas()
 window.addEventListener('resize', resizeCanvas)
 
-function renderDeviceList(vibe = computeVibe(sightings)) {
+function renderDeviceList(vibe = computeVibe(sightings, DEVICE_CAP)) {
+  const paintNumbers = listPaintNumbers(regions)
   devicesEl.innerHTML = sightings
     .slice()
     .sort((a, b) => b.rssi - a.rssi)
     .map((s) => {
-      const c = vibe.colorsByDevice.get(s.id)
-      const swatch = c ? hslToCss(c) : '#999'
+      const swatch = deviceSwatch(regions, s, vibe)
+      const paints = paintsForDevice(s.id, s.manufacturerId, paintNumbers)
       return `<li>
         <i class="swatch" style="background:${swatch}"></i>
-        <span>${s.name ?? s.id}</span>
+        <span>${s.name ?? s.id} → ${paints.join(', ')}</span>
         <span>${s.rssi.toFixed(0)} dBm</span>
       </li>`
     })
@@ -123,9 +160,9 @@ function frame(ts: number) {
   const dt = Math.min(0.05, (ts - lastTs) / 1000)
   lastTs = ts
 
-  const vibe = computeVibe(sightings)
+  const vibe = computeVibe(sightings, DEVICE_CAP)
   updatePaint(paint, regions, sightings, vibe, dt)
-  drawCanvas(ctx, regions, paint, vibeWash(vibe))
+  drawCanvas(ctx, regions, paint, vibe)
 
   statCount.textContent = String(vibe.deviceCount)
   statWarmth.textContent = `${Math.round(vibe.warmth * 100)}%`
