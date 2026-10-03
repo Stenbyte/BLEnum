@@ -35,7 +35,7 @@ function toSighting(d: FakeDevice, now: number): BleSighting {
 }
 
 export function createFakeSignalSource(
-  initial: FakeSignalOptions = { crowdSize: 0, rssiNoise: 4 },
+  initial: FakeSignalOptions = { crowdSize: 0, rssiNoise: 25 },
 ): SignalSource & {
   setCrowdSize: (n: number) => void
   setRssiNoise: (n: number) => void
@@ -44,7 +44,7 @@ export function createFakeSignalSource(
 } {
   const deviceCap = initial.deviceCap ?? DEVICE_CAP
   let crowdSize = Math.max(0, Math.min(deviceCap, initial.crowdSize))
-  let rssiNoise = initial.rssiNoise
+  let rssiNoise = Math.max(0, Math.min(25, initial.rssiNoise))
   let devices: FakeDevice[] = []
   let guests: FakeDevice[] = []
   let nextIndex = 0
@@ -89,11 +89,12 @@ export function createFakeSignalSource(
   }
 
   function tickDevice(d: FakeDevice) {
+    // Stronger jitter at high shimmer so breath reads clearly on canvas
     const drift = (Math.random() - 0.5) * rssiNoise
-    d.rssi += (d.targetRssi - d.rssi) * 0.08 + drift
+    d.rssi += (d.targetRssi - d.rssi) * 0.12 + drift
     d.rssi = Math.max(-100, Math.min(-35, d.rssi))
-    if (Math.random() < 0.02) {
-      d.targetRssi = -45 - Math.random() * 40
+    if (Math.random() < 0.05) {
+      d.targetRssi = -40 - Math.random() * 50
     }
   }
 
@@ -133,7 +134,7 @@ export function createFakeSignalSource(
       emit()
     },
     setRssiNoise(n: number) {
-      rssiNoise = Math.max(0, n)
+      rssiNoise = Math.max(0, Math.min(25, n))
     },
     walkPast() {
       if (allLive().length >= deviceCap) return
