@@ -17,6 +17,7 @@ import {
   deviceKey,
   listPaintNumbers,
   type Artwork,
+  type PaintShareMode,
 } from './art/regions'
 import {
   createEmptyPaint,
@@ -60,7 +61,7 @@ app.innerHTML = `
           <input id="art-file" type="file" accept=".svg,.jpg,.jpeg,.png,image/*" hidden />
         </label>
       </div>
-      <p class="hint">Load SVG / JPG / PNG. Gray start; devices unlock color.</p>
+      <p class="hint">Load SVG / JPG / PNG. White start; near devices reveal contours, then color.</p>
 
       <h2>Signal source</h2>
       <div class="actions mode-toggle" role="group" aria-label="Signal source">
@@ -79,6 +80,13 @@ app.innerHTML = `
         Default ${DEFAULT_NEAR_RSSI} dBm ≈ same table.
       </p>
 
+      <h2>Paint share</h2>
+      <div class="actions mode-toggle" role="group" aria-label="Paint share">
+        <button type="button" id="share-cover" class="mode-btn is-active">Cover</button>
+        <button type="button" id="share-crowd" class="mode-btn secondary">Crowd</button>
+      </div>
+      <p class="hint" id="share-hint">Cover: any near device unlocks the full palette.</p>
+
       <div id="fake-controls">
         <h2>Fake signals</h2>
         <div class="control">
@@ -86,8 +94,8 @@ app.innerHTML = `
           <input id="crowd" type="range" min="0" max="${DEVICE_CAP}" value="0" />
         </div>
         <div class="control">
-          <label>RSSI shimmer <strong id="noise-val">25</strong></label>
-          <input id="noise" type="range" min="0" max="25" step="0.5" value="25" />
+          <label>RSSI shimmer <strong id="noise-val">8</strong></label>
+          <input id="noise" type="range" min="0" max="25" step="0.5" value="8" />
         </div>
         <div class="actions">
           <button type="button" id="walk">Walk past</button>
@@ -139,6 +147,9 @@ const modeFakeBtn = document.querySelector<HTMLButtonElement>('#mode-fake')!
 const modeBridgeBtn = document.querySelector<HTMLButtonElement>('#mode-bridge')!
 const modeHint = document.querySelector('#mode-hint')!
 const bridgeHint = document.querySelector('#bridge-hint')!
+const shareCoverBtn = document.querySelector<HTMLButtonElement>('#share-cover')!
+const shareCrowdBtn = document.querySelector<HTMLButtonElement>('#share-crowd')!
+const shareHint = document.querySelector('#share-hint')!
 
 let artwork: Artwork | null = null
 let paint: PaintState = createEmptyPaint([])
@@ -146,11 +157,12 @@ let sightings: BleSighting[] = []
 let nearRssi = DEFAULT_NEAR_RSSI
 let lastTs = performance.now()
 let mode: SignalMode = 'fake'
+let shareMode: PaintShareMode = 'cover'
 let unsub: (() => void) | null = null
 
 const fake = createFakeSignalSource({
   crowdSize: 0,
-  rssiNoise: 25,
+  rssiNoise: 8,
   deviceCap: DEVICE_CAP,
 })
 const bridge = createBridgeSignalSource({
@@ -257,6 +269,22 @@ function switchMode(next: SignalMode) {
 modeFakeBtn.addEventListener('click', () => switchMode('fake'))
 modeBridgeBtn.addEventListener('click', () => switchMode('bridge'))
 
+function setShareMode(next: PaintShareMode) {
+  if (next === shareMode) return
+  shareMode = next
+  shareCoverBtn.classList.toggle('is-active', next === 'cover')
+  shareCoverBtn.classList.toggle('secondary', next !== 'cover')
+  shareCrowdBtn.classList.toggle('is-active', next === 'crowd')
+  shareCrowdBtn.classList.toggle('secondary', next !== 'crowd')
+  shareHint.textContent =
+    next === 'cover'
+      ? 'Cover: any near device unlocks the full palette.'
+      : `Crowd: each near device unlocks a slice (max ${DEVICE_CAP}). Need people for full color.`
+}
+
+shareCoverBtn.addEventListener('click', () => setShareMode('cover'))
+shareCrowdBtn.addEventListener('click', () => setShareMode('crowd'))
+
 document.querySelector('#bridge-connect')!.addEventListener('click', () => {
   if (mode !== 'bridge') return
   bridge.connect()
@@ -358,19 +386,21 @@ function renderDeviceList(vibe = computeVibe(sightings, DEVICE_CAP, nearRssi)) {
   const paintNumbers = listPaintNumbers(artwork.regions)
   const near = sightings.filter((s) => isNear(s.rssi, nearRssi))
   const keys = near.map((s) => deviceKey(s.id, s.manufacturerId))
-  const assigned = assignPaintsToDevices(keys, paintNumbers)
+  const assigned = assignPaintsToDevices(keys, paintNumbers, shareMode)
   devicesEl.innerHTML = sightings
     .slice()
     .sort((a, b) => b.rssi - a.rssi)
     .map((s) => {
       const close = isNear(s.rssi, nearRssi)
-      const swatch = deviceSwatch(artwork!.regions, s, vibe, sightings)
+      const swatch = deviceSwatch(artwork!.regions, s, vibe, sightings, shareMode)
       const paints = assigned.get(deviceKey(s.id, s.manufacturerId)) ?? []
       const label = !close
         ? 'far'
-        : paints.length <= 4
-          ? paints.join(', ')
-          : `${paints.slice(0, 3).join(', ')}…+${paints.length - 3}`
+        : paints.length === 0
+          ? 'no slot'
+          : paints.length <= 4
+            ? paints.join(', ')
+            : `${paints.slice(0, 3).join(', ')}…+${paints.length - 3}`
       return `<li class="${close ? 'is-near' : 'is-far'}">
         <i class="swatch" style="background:${swatch}"></i>
         <span>${s.name ?? s.id.slice(0, 12)} → ${label}</span>
@@ -386,7 +416,7 @@ function frame(ts: number) {
 
   const vibe = computeVibe(sightings, DEVICE_CAP, nearRssi)
   if (artwork) {
-    updatePaint(paint, artwork.regions, sightings, vibe, dt)
+    updatePaint(paint, artwork.regions, sightings, vibe, dt, shareMode)
     drawArtwork(ctx, artwork, paint, vibe)
   }
 

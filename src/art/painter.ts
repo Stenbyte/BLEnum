@@ -3,18 +3,24 @@ import {
   deviceKey,
   listPaintNumbers,
   type Artwork,
+  type PaintShareMode,
   type Region,
   type ViewBox,
 } from './regions'
 import {
   gradePaletteColor,
   hslToCss,
-  outlineWash,
   type VibeState,
 } from '../vibe/map'
 import type { BleSighting } from '../signals/types'
 
+/** Contour must reach this before color starts filling. */
+const COLOR_AFTER_CONTOUR = 0.35
+
 export type RegionPaint = {
+  /** 0–1 ink contours */
+  contour: number
+  /** 0–1 color fill */
   reveal: number
   breath: number
   claimed: boolean
@@ -29,7 +35,13 @@ export type PaintState = {
 export function createEmptyPaint(regions: Region[]): PaintState {
   const byRegion = new Map<number, RegionPaint>()
   for (const r of regions) {
-    byRegion.set(r.id, { reveal: 0, breath: 0, claimed: false, inRange: false })
+    byRegion.set(r.id, {
+      contour: 0,
+      reveal: 0,
+      breath: 0,
+      claimed: false,
+      inRange: false,
+    })
   }
   return { byRegion }
 }
@@ -50,11 +62,12 @@ function energyByRegion(
   regions: Region[],
   sightings: BleSighting[],
   vibe: VibeState,
+  shareMode: PaintShareMode,
 ): Map<number, RegionEnergy> {
   const paintNumbers = listPaintNumbers(regions)
   const near = nearSightings(sightings, vibe)
   const keys = near.map((s) => deviceKey(s.id, s.manufacturerId))
-  const assigned = assignPaintsToDevices(keys, paintNumbers)
+  const assigned = assignPaintsToDevices(keys, paintNumbers, shareMode)
   const energy = new Map<number, RegionEnergy>()
 
   for (const s of near) {
@@ -78,8 +91,9 @@ export function updatePaint(
   sightings: BleSighting[],
   vibe: VibeState,
   dt: number,
+  shareMode: PaintShareMode = 'cover',
 ): void {
-  const energy = energyByRegion(regions, sightings, vibe)
+  const energy = energyByRegion(regions, sightings, vibe, shareMode)
 
   for (const r of regions) {
     const state = paint.byRegion.get(r.id)!
@@ -87,18 +101,25 @@ export function updatePaint(
     state.inRange = !!live
 
     if (live) {
-      const boost = live.devices > 1 ? 1.25 : 1
-      // Closer (higher breath) → faster reveal; breath 0 never reaches here
-      const rate = (0.15 + live.breath * 0.95) * boost
-      state.reveal = Math.min(1, state.reveal + dt * rate)
+      const boost = live.devices > 1 ? 1.4 : 1
+      // Floor rate so weak RSSI still completes unlock in a few seconds
+      const rate = Math.max(0.55, 0.35 + live.breath * 1.1) * boost
+      state.contour = Math.min(1, state.contour + dt * rate * 1.6)
+      if (state.contour >= COLOR_AFTER_CONTOUR) {
+        state.reveal = Math.min(1, state.reveal + dt * rate * 1.8)
+      }
       state.breath += (live.breath - state.breath) * Math.min(1, dt * 8)
-      if (state.reveal > 0.15) state.claimed = true
+      if (state.contour > 0.12 || state.reveal > 0.15) state.claimed = true
     } else {
-      // Device left range — fade color back toward gray
-      const fade = 0.45 + (1 - state.breath) * 0.25
-      state.reveal = Math.max(0, state.reveal - dt * fade)
+      const fade =
+        (state.claimed ? 0.18 : 0.4) + (1 - state.breath) * 0.15
+      if (state.reveal > 0) {
+        state.reveal = Math.max(0, state.reveal - dt * fade)
+      } else {
+        state.contour = Math.max(0, state.contour - dt * fade * 0.65)
+      }
       state.breath += (0.05 - state.breath) * Math.min(1, dt * 3)
-      if (state.reveal < 0.05) state.claimed = false
+      if (state.contour < 0.05 && state.reveal < 0.05) state.claimed = false
     }
   }
 }
@@ -123,13 +144,13 @@ export function drawArtwork(
 ): void {
   const { width, height } = ctx.canvas
   ctx.clearRect(0, 0, width, height)
-  ctx.fillStyle = outlineWash(vibe.warmth)
+  ctx.fillStyle = '#ffffff'
   ctx.fillRect(0, 0, width, height)
 
   ctx.save()
   setupView(ctx, artwork.viewBox)
 
-  if (artwork.mode === 'raster' && artwork.grayCanvas) {
+  if (artwork.mode === 'raster') {
     drawRaster(ctx, artwork, paint)
   } else {
     drawVector(ctx, artwork.regions, paint, vibe, artwork.viewBox)
@@ -144,14 +165,34 @@ function drawRaster(
   paint: PaintState,
 ): void {
   const { w, h } = artwork.viewBox
-  ctx.drawImage(artwork.grayCanvas!, 0, 0, w, h)
 
+  // Phase 1 — contours (breath only softens ink, never blocks)
   for (const r of artwork.regions) {
     const state = paint.byRegion.get(r.id)!
-    if (state.reveal > 0.01 && r.colorLayer) {
-      const pulse = 0.55 + state.breath * 0.45
-      ctx.globalAlpha = Math.min(1, state.reveal * pulse)
-      ctx.drawImage(r.colorLayer, 0, 0, w, h)
+    if (state.contour <= 0.01 || !r.edgeLayer) continue
+    ctx.globalAlpha = Math.min(1, state.contour * (0.85 + state.breath * 0.15))
+    ctx.drawImage(r.edgeLayer, 0, 0, w, h)
+    ctx.globalAlpha = 1
+  }
+
+  // Phase 2 — color: opacity follows reveal only (breath must NOT cap color)
+  for (const r of artwork.regions) {
+    const state = paint.byRegion.get(r.id)!
+    if (state.reveal <= 0.01 || !r.colorLayer) continue
+    ctx.globalAlpha = Math.min(1, state.reveal)
+    ctx.drawImage(r.colorLayer, 0, 0, w, h)
+    ctx.globalAlpha = 1
+  }
+
+  // When every paint is unlocked, blend in the true photo so it reads “complete”
+  if (artwork.sourceCanvas && artwork.regions.length > 0) {
+    let minReveal = 1
+    for (const r of artwork.regions) {
+      minReveal = Math.min(minReveal, paint.byRegion.get(r.id)!.reveal)
+    }
+    if (minReveal > 0.82) {
+      ctx.globalAlpha = Math.min(1, (minReveal - 0.82) / 0.18)
+      ctx.drawImage(artwork.sourceCanvas, 0, 0, w, h)
       ctx.globalAlpha = 1
     }
   }
@@ -164,28 +205,32 @@ function drawVector(
   vibe: VibeState,
   viewBox: ViewBox,
 ): void {
-  const strokeW = Math.max(0.5, viewBox.w / 500)
+  const strokeW = Math.max(0.8, viewBox.w / 420)
 
   for (const r of regions) {
     if (!r.path) continue
     const state = paint.byRegion.get(r.id)!
-    // Prefer true SVG color; light warmth/breath only
-    const graded = gradePaletteColor(r.baseColor, vibe.warmth * 0.35, state.breath)
+    const graded = gradePaletteColor(
+      r.baseColor,
+      vibe.warmth * 0.35,
+      Math.max(state.breath, state.reveal),
+    )
 
-    ctx.fillStyle = 'rgba(240,240,240,0.5)'
-    ctx.fill(r.path)
+    if (state.contour > 0.01) {
+      ctx.globalAlpha = Math.min(0.95, state.contour * (0.85 + state.breath * 0.15))
+      ctx.strokeStyle = 'rgba(24, 28, 36, 0.85)'
+      ctx.lineWidth = strokeW
+      ctx.lineJoin = 'round'
+      ctx.stroke(r.path)
+      ctx.globalAlpha = 1
+    }
 
     if (state.reveal > 0.01) {
-      const pulse = 0.55 + state.breath * 0.45
-      ctx.globalAlpha = Math.min(1, state.reveal * pulse)
+      ctx.globalAlpha = Math.min(1, state.reveal)
       ctx.fillStyle = hslToCss(graded, 1)
       ctx.fill(r.path)
       ctx.globalAlpha = 1
     }
-
-    ctx.strokeStyle = 'rgba(20, 24, 32, 0.2)'
-    ctx.lineWidth = strokeW
-    ctx.stroke(r.path)
   }
 }
 
@@ -194,6 +239,7 @@ export function deviceSwatch(
   sighting: BleSighting,
   vibe: VibeState,
   allSightings: BleSighting[],
+  shareMode: PaintShareMode = 'cover',
 ): string {
   const breath = vibe.breathByDevice.get(sighting.id) ?? 0
   if (breath <= 0) return '#bbb'
@@ -201,10 +247,12 @@ export function deviceSwatch(
   const near = nearSightings(allSightings, vibe)
   const keys = near.map((s) => deviceKey(s.id, s.manufacturerId))
   const paints =
-    assignPaintsToDevices(keys, paintNumbers).get(
+    assignPaintsToDevices(keys, paintNumbers, shareMode).get(
       deviceKey(sighting.id, sighting.manufacturerId),
     ) ?? []
   const region = regions.find((r) => r.paintNumber === paints[0])
   if (!region) return '#999'
-  return hslToCss(gradePaletteColor(region.baseColor, vibe.warmth * 0.35, breath))
+  return hslToCss(
+    gradePaletteColor(region.baseColor, vibe.warmth * 0.35, Math.max(breath, 0.5)),
+  )
 }

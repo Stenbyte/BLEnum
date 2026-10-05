@@ -47,6 +47,64 @@ function toGray(source: HTMLCanvasElement): HTMLCanvasElement {
   return gray
 }
 
+/** Sobel-ish edge ink on transparent — dark lines where contrast is high. */
+function toEdges(gray: HTMLCanvasElement): HTMLCanvasElement {
+  const w = gray.width
+  const h = gray.height
+  const gctx = gray.getContext('2d', { willReadFrequently: true })!
+  const src = gctx.getImageData(0, 0, w, h).data
+  const out = makeCanvas(w, h)
+  const octx = out.getContext('2d')!
+  const id = octx.createImageData(w, h)
+  const d = id.data
+
+  const lum = (x: number, y: number) => {
+    const i = (y * w + x) * 4
+    return src[i]
+  }
+
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const gx =
+        -lum(x - 1, y - 1) +
+        lum(x + 1, y - 1) +
+        -2 * lum(x - 1, y) +
+        2 * lum(x + 1, y) +
+        -lum(x - 1, y + 1) +
+        lum(x + 1, y + 1)
+      const gy =
+        -lum(x - 1, y - 1) -
+        2 * lum(x, y - 1) -
+        lum(x + 1, y - 1) +
+        lum(x - 1, y + 1) +
+        2 * lum(x, y + 1) +
+        lum(x + 1, y + 1)
+      const mag = Math.min(255, Math.hypot(gx, gy))
+      if (mag < 28) continue
+      const i = (y * w + x) * 4
+      d[i] = 28
+      d[i + 1] = 30
+      d[i + 2] = 36
+      d[i + 3] = Math.min(220, 40 + mag)
+    }
+  }
+  octx.putImageData(id, 0, 0)
+  return out
+}
+
+function maskLayer(
+  ink: HTMLCanvasElement,
+  mask: HTMLCanvasElement,
+): HTMLCanvasElement {
+  const c = makeCanvas(ink.width, ink.height)
+  const ctx = c.getContext('2d')!
+  ctx.drawImage(ink, 0, 0)
+  ctx.globalCompositeOperation = 'destination-in'
+  ctx.drawImage(mask, 0, 0)
+  ctx.globalCompositeOperation = 'source-over'
+  return c
+}
+
 /** Quantize channel to reduce JPEG noise into paint buckets. */
 function q8(v: number): number {
   return Math.min(255, Math.round(v / 24) * 24)
@@ -71,7 +129,7 @@ type Bucket = {
 
 /**
  * Build paint regions from a raster image.
- * Same colors → same paint number. Gray base = colors removed.
+ * Same colors → same paint number. White canvas; contours then color unlock.
  */
 export function artworkFromImageBitmap(
   img: CanvasImageSource & { width: number; height: number },
@@ -199,6 +257,9 @@ export function artworkFromImageBitmap(
     }
   }
 
+  const grayCanvas = toGray(sourceCanvas)
+  const edgeCanvas = toEdges(grayCanvas)
+
   const regions: Region[] = []
   for (const b of list) {
     const paintNumber = keyToPaint.get(b.key)!
@@ -218,10 +279,9 @@ export function artworkFromImageBitmap(
       cx: b.sumX / b.count,
       cy: b.sumY / b.count,
       colorLayer: layer,
+      edgeLayer: maskLayer(edgeCanvas, layer),
     })
   }
-
-  const grayCanvas = toGray(sourceCanvas)
 
   return {
     ok: true,
@@ -232,6 +292,7 @@ export function artworkFromImageBitmap(
       warnings,
       sourceCanvas,
       grayCanvas,
+      edgeCanvas,
       mode: 'raster',
     },
   }

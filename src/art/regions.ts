@@ -11,6 +11,8 @@ export type Region = {
   cy: number
   /** Offscreen layer: colored pixels for this paint, transparent elsewhere */
   colorLayer?: HTMLCanvasElement
+  /** Offscreen layer: ink contours for this paint (raster), transparent elsewhere */
+  edgeLayer?: HTMLCanvasElement
 }
 
 export type ViewBox = {
@@ -27,37 +29,56 @@ export type Artwork = {
   warnings: string[]
   /** Full-color source (raster mode) */
   sourceCanvas?: HTMLCanvasElement
-  /** Grayscale of source (raster mode) — “colors removed” */
+  /** Grayscale of source (raster mode) — optional / legacy */
   grayCanvas?: HTMLCanvasElement
+  /** Full-image edge ink (raster mode) */
+  edgeCanvas?: HTMLCanvasElement
   mode: 'raster' | 'vector'
 }
 
-/** Max live devices for Step 1. */
+/** Max live devices (and max crowd paint slots). */
 export const DEVICE_CAP = 20
+
+/** How paints are shared across near devices. */
+export type PaintShareMode = 'cover' | 'crowd'
 
 export function listPaintNumbers(regions: Region[]): number[] {
   return [...new Set(regions.map((r) => r.paintNumber))].sort((a, b) => a - b)
 }
 
 /**
- * Spread paints across live devices with no gaps.
- * Round-robin so the union of assignments always covers every paint
- * whenever at least one device is present (fixes permanent gray holes).
+ * Assign paints to near devices.
+ * - cover: every near device unlocks every paint (1 person → full palette)
+ * - crowd: partition into up to DEVICE_CAP slots; need people for full color
  */
 export function assignPaintsToDevices(
   deviceKeys: string[],
   paintNumbers: number[],
+  mode: PaintShareMode = 'cover',
 ): Map<string, number[]> {
   const map = new Map<string, number[]>()
   if (deviceKeys.length === 0 || paintNumbers.length === 0) return map
 
   const devices = [...deviceKeys].sort()
+  const paints = [...paintNumbers].sort((a, b) => a - b)
+
+  if (mode === 'cover') {
+    for (const id of devices) map.set(id, [...paints])
+    return map
+  }
+
   for (const id of devices) map.set(id, [])
 
-  const paints = [...paintNumbers].sort((a, b) => a - b)
+  const slotCount = Math.min(DEVICE_CAP, paints.length)
   paints.forEach((paint, i) => {
-    const id = devices[i % devices.length]
-    map.get(id)!.push(paint)
+    const slot = i % slotCount
+    // Only the device currently holding this slot unlocks the paint.
+    // Extra devices beyond slotCount share earlier slots (same paints).
+    if (slot < devices.length) {
+      for (let d = slot; d < devices.length; d += slotCount) {
+        map.get(devices[d])!.push(paint)
+      }
+    }
   })
   return map
 }
@@ -76,10 +97,11 @@ export function paintsForDevice(
   manufacturerId: number | undefined,
   paintNumbers: number[],
   allDeviceKeys?: string[],
+  mode: PaintShareMode = 'cover',
 ): number[] {
   if (paintNumbers.length === 0) return []
   const key = deviceKey(deviceId, manufacturerId)
   const keys =
     allDeviceKeys && allDeviceKeys.length > 0 ? allDeviceKeys : [key]
-  return assignPaintsToDevices(keys, paintNumbers).get(key) ?? []
+  return assignPaintsToDevices(keys, paintNumbers, mode).get(key) ?? []
 }
