@@ -1,6 +1,5 @@
 import './style.css'
 import { createFakeSignalSource } from './signals/fake'
-import { createBleSignalSource, isBleScanSupported } from './signals/ble'
 import {
   createBridgeSignalSource,
   DEFAULT_BRIDGE_URL,
@@ -29,12 +28,10 @@ import {
 import { loadRasterFromFile } from './art/raster/parse'
 import { loadSvgFromFile } from './art/svg/parse'
 
-type SignalMode = 'fake' | 'bridge' | 'chrome'
+type SignalMode = 'fake' | 'bridge'
 
 const app = document.querySelector<HTMLDivElement>('#app')
 if (!app) throw new Error('#app missing')
-
-const bleSupported = isBleScanSupported()
 
 app.innerHTML = `
   <header class="top">
@@ -66,10 +63,9 @@ app.innerHTML = `
       <p class="hint">Load SVG / JPG / PNG. Gray start; devices unlock color.</p>
 
       <h2>Signal source</h2>
-      <div class="actions mode-toggle mode-toggle-3" role="group" aria-label="Signal source">
+      <div class="actions mode-toggle" role="group" aria-label="Signal source">
         <button type="button" id="mode-fake" class="mode-btn is-active">Fake</button>
         <button type="button" id="mode-bridge" class="mode-btn secondary">Bridge</button>
-        <button type="button" id="mode-chrome" class="mode-btn secondary" ${bleSupported ? '' : 'disabled title="Chrome experimental scan not available"'}>Chrome</button>
       </div>
       <p class="hint" id="mode-hint">Fake: simulated crowd.</p>
 
@@ -103,25 +99,12 @@ app.innerHTML = `
         <h2>BLE bridge</h2>
         <p class="hint" id="bridge-hint">
           Run <code>npm run bridge</code> in a terminal, then Connect.
-          Uses your Mac Bluetooth radio (not Chrome scan).
         </p>
         <p class="art-name" id="bridge-url">${DEFAULT_BRIDGE_URL}</p>
         <div class="actions">
           <button type="button" id="bridge-connect">Connect</button>
           <button type="button" class="secondary" id="bridge-disconnect">Disconnect</button>
           <button type="button" class="secondary" id="reset-bridge">Reset paint</button>
-        </div>
-      </div>
-
-      <div id="chrome-controls" hidden>
-        <h2>Chrome scan (experimental)</h2>
-        <p class="hint" id="chrome-hint">
-          Flaky on many Macs. Prefer Bridge. Needs experimental Web Bluetooth flag.
-        </p>
-        <div class="actions">
-          <button type="button" id="scan-start">Start scan</button>
-          <button type="button" class="secondary" id="scan-stop">Stop scan</button>
-          <button type="button" class="secondary" id="reset-chrome">Reset paint</button>
         </div>
       </div>
 
@@ -152,13 +135,10 @@ const statRssi = document.querySelector('#stat-rssi')!
 const fileInput = document.querySelector<HTMLInputElement>('#art-file')!
 const fakeControls = document.querySelector<HTMLElement>('#fake-controls')!
 const bridgeControls = document.querySelector<HTMLElement>('#bridge-controls')!
-const chromeControls = document.querySelector<HTMLElement>('#chrome-controls')!
 const modeFakeBtn = document.querySelector<HTMLButtonElement>('#mode-fake')!
 const modeBridgeBtn = document.querySelector<HTMLButtonElement>('#mode-bridge')!
-const modeChromeBtn = document.querySelector<HTMLButtonElement>('#mode-chrome')!
 const modeHint = document.querySelector('#mode-hint')!
 const bridgeHint = document.querySelector('#bridge-hint')!
-const chromeHint = document.querySelector('#chrome-hint')!
 
 let artwork: Artwork | null = null
 let paint: PaintState = createEmptyPaint([])
@@ -177,18 +157,15 @@ const bridge = createBridgeSignalSource({
   url: DEFAULT_BRIDGE_URL,
   deviceCap: DEVICE_CAP,
 })
-const chromeBle = createBleSignalSource({ deviceCap: DEVICE_CAP })
 
 function activeSource(): SignalSource {
   if (mode === 'bridge') return bridge
-  if (mode === 'chrome') return chromeBle
   return fake
 }
 
 function stopAllSources() {
   fake.stop()
   bridge.stop()
-  chromeBle.stop()
 }
 
 function bindSource(src: SignalSource) {
@@ -248,28 +225,19 @@ function setModeUi(next: SignalMode) {
   modeFakeBtn.classList.toggle('secondary', next !== 'fake')
   modeBridgeBtn.classList.toggle('is-active', next === 'bridge')
   modeBridgeBtn.classList.toggle('secondary', next !== 'bridge')
-  modeChromeBtn.classList.toggle('is-active', next === 'chrome')
-  modeChromeBtn.classList.toggle('secondary', next !== 'chrome')
 
   fakeControls.hidden = next !== 'fake'
   bridgeControls.hidden = next !== 'bridge'
-  chromeControls.hidden = next !== 'chrome'
 
   if (next === 'fake') {
     modeHint.textContent = 'Fake: simulated crowd + shimmer.'
-  } else if (next === 'bridge') {
-    modeHint.textContent = 'Bridge: local BLE helper → WebSocket (reliable Live).'
   } else {
-    modeHint.textContent = 'Chrome: experimental requestLEScan (often broken on Mac).'
+    modeHint.textContent = 'Bridge: local BLE helper → WebSocket (Live).'
   }
 }
 
 function switchMode(next: SignalMode) {
   if (next === mode) return
-  if (next === 'chrome' && !chromeBle.supported) {
-    showStatus('Chrome BLE scan not available in this browser.', 'error')
-    return
-  }
 
   stopAllSources()
   sightings = []
@@ -279,19 +247,15 @@ function switchMode(next: SignalMode) {
   if (next === 'fake') {
     fake.start()
     showStatus(artwork ? '' : 'Load an SVG or image to start', artwork ? 'ok' : 'warn')
-  } else if (next === 'bridge') {
+  } else {
     bridgeHint.innerHTML =
       'Run <code>npm run bridge</code> in a terminal, then Connect.'
     showStatus('Bridge mode — start helper, then Connect', 'warn')
-  } else {
-    chromeHint.textContent = 'Prefer Bridge. Click Start scan only if you want to try Chrome.'
-    showStatus('Chrome scan mode (experimental)', 'warn')
   }
 }
 
 modeFakeBtn.addEventListener('click', () => switchMode('fake'))
 modeBridgeBtn.addEventListener('click', () => switchMode('bridge'))
-modeChromeBtn.addEventListener('click', () => switchMode('chrome'))
 
 document.querySelector('#bridge-connect')!.addEventListener('click', () => {
   if (mode !== 'bridge') return
@@ -315,26 +279,6 @@ document.querySelector('#bridge-disconnect')!.addEventListener('click', () => {
   showStatus('Bridge disconnected', 'warn')
   bridgeHint.innerHTML =
     'Run <code>npm run bridge</code> in a terminal, then Connect.'
-})
-
-document.querySelector('#scan-start')!.addEventListener('click', async () => {
-  if (mode !== 'chrome') return
-  chromeHint.textContent = 'Chrome prompt — click Allow if it appears.'
-  showStatus('Waiting for Bluetooth permission…', 'warn')
-  try {
-    await chromeBle.startScan()
-    chromeHint.textContent = 'Chrome scanning…'
-    showStatus('Chrome BLE scan active', 'ok')
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    showStatus(msg, 'error')
-    chromeHint.textContent = 'Chrome scan failed — use Bridge instead.'
-  }
-})
-
-document.querySelector('#scan-stop')!.addEventListener('click', () => {
-  chromeBle.stop()
-  showStatus('Chrome scan stopped', 'warn')
 })
 
 crowdInput.addEventListener('input', () => {
@@ -361,7 +305,6 @@ function resetPaint() {
 }
 document.querySelector('#reset')!.addEventListener('click', resetPaint)
 document.querySelector('#reset-bridge')!.addEventListener('click', resetPaint)
-document.querySelector('#reset-chrome')!.addEventListener('click', resetPaint)
 
 fileInput.addEventListener('change', async () => {
   const file = fileInput.files?.[0]

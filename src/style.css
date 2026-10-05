@@ -152,10 +152,6 @@ body {
   gap: 0.4rem;
 }
 
-.mode-toggle-3 {
-  grid-template-columns: 1fr 1fr 1fr;
-}
-
 .mode-toggle .mode-btn {
   font-size: 0.78rem;
   padding: 0.45rem 0.35rem;

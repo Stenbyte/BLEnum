@@ -2,17 +2,16 @@
 
 Render invisible Bluetooth Low Energy (BLE) advertising signatures as visible paint-by-numbers art in the browser.
 
-Load your artwork → grayscale → devices unlock colors (fake, local bridge, or experimental Chrome scan).
+Load your artwork → grayscale → devices unlock colors (fake or local bridge).
 
 ## Signal sources
 
 | Mode | What |
 |------|------|
 | **Fake** | Simulated crowd (no Bluetooth) |
-| **Bridge** | Local Python/bleak helper scans BLE → WebSocket → app (**reliable Live**) |
-| **Chrome** | Experimental `requestLEScan` (often broken on Mac) |
+| **Bridge** | Local Python/bleak helper scans BLE → WebSocket → app (**Live**) |
 
-### Bridge (recommended for real devices)
+### Bridge (for real devices)
 
 ```bash
 # terminal 1 — website
@@ -29,10 +28,6 @@ In the UI: **Bridge** → **Connect** (`ws://127.0.0.1:8787`).
 macOS: System Settings → Privacy & Security → Bluetooth → allow **Terminal**.
 
 Details: [`bridge/README.md`](bridge/README.md).
-
-### Chrome scan (optional)
-
-Needs `chrome://flags/#enable-experimental-web-platform-features`. Prefer Bridge if Allow keeps failing.
 
 ## Reveal model
 
