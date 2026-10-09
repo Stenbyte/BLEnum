@@ -22,7 +22,7 @@ import { loadRasterFromFile } from "./art/raster/parse";
 import { loadSvgFromFile } from "./art/svg/parse";
 import type { Stage } from "./stages/types";
 import { createFutureStage } from "./stages/future";
-import { isRevealComplete, minReveal } from "./stages/unlock";
+import { minReveal } from "./stages/unlock";
 
 type SignalMode = "fake" | "bridge";
 
@@ -173,8 +173,6 @@ let lastTimestamp = performance.now();
 let mode: SignalMode = "fake";
 let shareMode: PaintShareMode = "cover";
 let stage: Stage = "reveal";
-/** Prevents auto-unlock from re-firing until paint is reset. */
-let autoUnlocked = false;
 let unsub: (() => void) | null = null;
 
 const future = createFutureStage();
@@ -273,7 +271,6 @@ function setStage(next: Stage, reason: "auto" | "force" | "back" = "force") {
 function applyArtwork(next: Artwork) {
   artwork = next;
   paint = createEmptyPaint(next.regions);
-  autoUnlocked = false;
   artNameEl.textContent = `${next.name} · ${listPaintNumbers(next.regions).length} paints · ${next.mode}`;
   renderPalette();
   if (next.warnings.length) {
@@ -366,7 +363,6 @@ shareCoverBtn.addEventListener("click", () => setShareMode("cover"));
 shareCrowdBtn.addEventListener("click", () => setShareMode("crowd"));
 
 forceFutureBtn.addEventListener("click", () => {
-  autoUnlocked = true;
   setStage("future", "force");
 });
 
@@ -421,7 +417,6 @@ document
 
 function resetPaint() {
   if (artwork) paint = createEmptyPaint(artwork.regions);
-  autoUnlocked = false;
   if (stage === "future") setStage("reveal", "back");
   updateStageHint();
 }
