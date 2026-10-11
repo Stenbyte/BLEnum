@@ -252,7 +252,7 @@ function setStage(next: Stage, reason: "auto" | "force" | "back" = "force") {
     showStatus(
       reason === "auto"
         ? "Palette complete — entered Future stage"
-        : "Force Future — placeholder (Three.js next)",
+        : "Force Future — stub city (swap for GLB later)",
       "ok",
     );
   } else {
