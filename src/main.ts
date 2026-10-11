@@ -2,7 +2,12 @@ import "./style.css";
 import { createFakeSignalSource } from "./signals/fake";
 import { createBridgeSignalSource, DEFAULT_BRIDGE_URL } from "./signals/bridge";
 import type { BleSighting, SignalSource } from "./signals/types";
-import { computeVibe, DEFAULT_NEAR_RSSI, hslToCss, isNear } from "./vibe/map";
+import {
+  computeVibe,
+  DEFAULT_NEAR_RSSI,
+  hslToCss,
+  isDeviceNear,
+} from "./vibe/map";
 import {
   assignPaintsToDevices,
   DEVICE_CAP,
@@ -80,7 +85,8 @@ app.innerHTML = `
       </div>
       <p class="hint">
         Only devices at/above this RSSI unlock color. Right = must get closer.
-        Default ${DEFAULT_NEAR_RSSI} dBm ≈ same table.
+        Default ${DEFAULT_NEAR_RSSI} dBm ≈ same table. Signal is smoothed so brief
+        blips do not flip near/far.
       </p>
 
       <h2>Paint share</h2>
@@ -473,20 +479,20 @@ function resizeCanvas() {
 resizeCanvas();
 window.addEventListener("resize", resizeCanvas);
 
-function renderDeviceList(vibe = computeVibe(sightings, DEVICE_CAP, nearRssi)) {
+function renderDeviceList(vibe: ReturnType<typeof computeVibe>) {
   if (!artwork) {
     devicesEl.innerHTML = "";
     return;
   }
   const paintNumbers = listPaintNumbers(artwork.regions);
-  const near = sightings.filter((s) => isNear(s.rssi, nearRssi));
+  const near = sightings.filter((s) => isDeviceNear(vibe, s.id));
   const keys = near.map((s) => deviceKey(s.id, s.manufacturerId));
   const assigned = assignPaintsToDevices(keys, paintNumbers, shareMode);
   devicesEl.innerHTML = sightings
     .slice()
     .sort((a, b) => b.rssi - a.rssi)
     .map((s) => {
-      const close = isNear(s.rssi, nearRssi);
+      const close = isDeviceNear(vibe, s.id);
       const swatch = deviceSwatch(
         artwork!.regions,
         s,
