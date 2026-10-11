@@ -5,14 +5,12 @@ Local helper: scan BLE, push devices to the browser over WebSocket.
 ```
 phones / watches (BLE ads)
         ↓
-  bridge (this folder)
+  bridge (Python / bleak)
         ↓  ws://127.0.0.1:8787
   BLEnum web app → Bridge → Connect
 ```
 
-## Run (recommended — Python / bleak)
-
-Works well on modern macOS.
+## Run
 
 ```bash
 # from repo root
@@ -30,20 +28,11 @@ chmod +x start.sh
 
 Leave it running. In the app: **Bridge** → **Connect**.
 
-## Optional — Node / noble
-
-Native module; needs working `node-gyp` (Xcode CLT). Often painful on Node 22.
-
-```bash
-npm run bridge:node:install
-npm run bridge:node
-```
-
 ## Requirements
 
 - Bluetooth on
 - macOS: System Settings → Privacy & Security → Bluetooth → allow **Terminal** (or iTerm)
-- Python 3.10+ for the default bridge
+- Python 3.10+
 
 ## Env (optional)
 

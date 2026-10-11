@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start the BLEnum BLE bridge (Python/bleak preferred on macOS).
+# Start the BLEnum BLE bridge (Python / bleak).
 set -euo pipefail
 cd "$(dirname "$0")"
 
