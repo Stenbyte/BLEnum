@@ -290,7 +290,7 @@ button:hover {
   overflow: auto;
   font-size: 0.78rem;
   font-variant-numeric: tabular-nums;
-  flex-shrink: 1;
+  flex-shrink: 0;
 }
 
 .device-list li {
