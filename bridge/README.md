@@ -33,6 +33,9 @@ Leave it running. In the app: **Bridge** → **Connect**.
 - Bluetooth on
 - macOS: System Settings → Privacy & Security → Bluetooth → allow **Terminal** (or iTerm)
 - Python 3.10+
+- `pip` with `--uploaded-prior-to` (install script upgrades pip if needed)
+
+`npm run bridge:install` / auto-install in `start.sh` read root `.npmrc` `min-release-age` (days) and pass the same window to pip as `--uploaded-prior-to P{N}D`.
 
 ## Env (optional)
 
