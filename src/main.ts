@@ -16,6 +16,7 @@ import {
   type Artwork,
   type PaintShareMode,
 } from "./art/regions";
+import { MESH_COLOR_COMPLETE } from "./three/meshReveal";
 import {
   createEmptyPaint,
   deviceSwatch,
@@ -233,8 +234,22 @@ function updateStageHint() {
     return;
   }
   if (stage === "future") {
-    stageHint.textContent =
-      "Future stage (3D). Reveal returns to 2D paint. Reset show clears paint.";
+    if (future.lastError) {
+      stageHint.textContent = `Model error: ${future.lastError}`;
+      return;
+    }
+    if (!future.modelReady) {
+      stageHint.textContent = "Loading 3D model…";
+      return;
+    }
+    const pct = Math.round(future.colorProgress * 100);
+    const need = Math.round(MESH_COLOR_COMPLETE * 100);
+    if (future.colorComplete) {
+      stageHint.textContent =
+        "Color complete — animation on. Near devices add motion energy.";
+      return;
+    }
+    stageHint.textContent = `3D color ${pct}% (need ~${need}%). Cover=all meshes; Crowd=split. No motion yet.`;
     return;
   }
   stageHint.textContent =
@@ -607,7 +622,14 @@ function frame(ts: number) {
     stage === "future" ||
     canvasWrap.dataset.transition?.startsWith("to-future")
   ) {
-    future.tick(differenceTime, vibe);
+    const nearKeys = sightings
+      .filter((s) => isDeviceNear(vibe, s.id))
+      .map((s) => deviceKey(s.id, s.manufacturerId));
+    future.tick(differenceTime, vibe, {
+      shareMode,
+      nearKeys,
+    });
+    if (stage === "future") updateStageHint();
   }
 
   if (

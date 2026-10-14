@@ -1,15 +1,23 @@
+import type { PaintShareMode } from '../art/regions'
 import type { VibeState } from '../vibe/map'
-import { createFutureScene, type FutureScene } from '../three/scene'
+import {
+  createFutureScene,
+  type FutureScene,
+  type FutureTickInput,
+} from '../three/scene'
 
 /**
- * Future stage — Three.js scene in `#future-host`.
- * Tick receives vibe for later crowd → motion / color reveal.
+ * Future stage — muted GLB → Cover/Crowd color → then animation.
  */
 export type FutureStageController = {
   mount: (host: HTMLElement) => void
   unmount: () => void
-  tick: (dt: number, vibe: VibeState) => void
+  tick: (dt: number, vibe: VibeState, input: FutureTickInput) => void
   readonly mounted: boolean
+  readonly modelReady: boolean
+  readonly colorComplete: boolean
+  readonly colorProgress: number
+  readonly lastError: string
 }
 
 export function createFutureStage(): FutureStageController {
@@ -19,14 +27,28 @@ export function createFutureStage(): FutureStageController {
     get mounted() {
       return scene.mounted
     },
+    get modelReady() {
+      return scene.modelReady
+    },
+    get colorComplete() {
+      return scene.colorComplete
+    },
+    get colorProgress() {
+      return scene.colorProgress
+    },
+    get lastError() {
+      return scene.lastError
+    },
     mount(host) {
       scene.mount(host)
     },
     unmount() {
       scene.unmount()
     },
-    tick(dt, vibe) {
-      scene.tick(dt, vibe)
+    tick(dt, vibe, input) {
+      scene.tick(dt, vibe, input)
     },
   }
 }
+
+export type { FutureTickInput, PaintShareMode }

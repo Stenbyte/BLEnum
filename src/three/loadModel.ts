@@ -4,13 +4,17 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 /** Current test model in public/models/ */
 export const FUTURE_MODEL_URL = '/models/Aero_Airship_01.glb'
 
+export type LoadedFutureModel = {
+  root: THREE.Group
+  animations: THREE.AnimationClip[]
+}
+
 /**
- * Load a GLB and normalize it (centered, grounded, scaled into a hero box).
- * Throws if the file is missing or fails.
+ * Load a GLB, center at origin, normalize scale so framing is stable.
  */
 export async function loadFutureModel(
   url = FUTURE_MODEL_URL,
-): Promise<THREE.Group> {
+): Promise<LoadedFutureModel> {
   const loader = new GLTFLoader()
   const gltf = await loader.loadAsync(url)
   const root = new THREE.Group()
@@ -24,21 +28,23 @@ export async function loadFutureModel(
     }
   })
 
+  // Center on origin first
   const box = new THREE.Box3().setFromObject(root)
   const size = new THREE.Vector3()
   const center = new THREE.Vector3()
   box.getSize(size)
   box.getCenter(center)
+  root.position.sub(center)
 
-  const maxDim = Math.max(size.x, size.y, size.z, 0.001)
-  const scale = 8 / maxDim
-  root.scale.setScalar(scale)
-
+  // Normalize so largest axis ≈ 1 (camera framing does the rest)
   box.setFromObject(root)
-  box.getCenter(center)
-  root.position.x -= center.x
-  root.position.z -= center.z
-  root.position.y -= box.min.y
+  box.getSize(size)
+  const maxDim = Math.max(size.x, size.y, size.z, 0.001)
+  root.scale.setScalar(1 / maxDim)
+  root.position.multiplyScalar(1 / maxDim)
 
-  return root
+  return {
+    root,
+    animations: gltf.animations ?? [],
+  }
 }
