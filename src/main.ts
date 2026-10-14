@@ -27,7 +27,7 @@ import { loadRasterFromFile } from "./art/raster/parse";
 import { loadSvgFromFile } from "./art/svg/parse";
 import type { Stage } from "./stages/types";
 import { createFutureStage } from "./stages/future";
-import { minReveal } from "./stages/unlock";
+import { runStageTransition } from "./stages/transition";
 
 type SignalMode = "fake" | "bridge";
 
@@ -66,10 +66,11 @@ app.innerHTML = `
       <h2>Stage</h2>
       <p class="art-name" id="stage-label">reveal</p>
       <div class="actions">
-        <button type="button" id="force-future">Force Future</button>
-        <button type="button" class="secondary" id="back-reveal">Back to Reveal</button>
+        <button type="button" id="force-future">Future</button>
+        <button type="button" class="secondary" id="back-reveal">Reveal</button>
+        <button type="button" class="secondary" id="reset-show">Reset show</button>
       </div>
-      <p class="hint" id="stage-hint">Future unlocks when the palette is complete, or use Force Future.</p>
+      <p class="hint" id="stage-hint">Reveal and Future are separate. Switch manually — no auto jump.</p>
 
       <h2>Signal source</h2>
       <div class="actions mode-toggle" role="group" aria-label="Signal source">
@@ -170,6 +171,8 @@ const forceFutureBtn =
   document.querySelector<HTMLButtonElement>("#force-future")!;
 const backRevealBtn =
   document.querySelector<HTMLButtonElement>("#back-reveal")!;
+const resetShowBtn =
+  document.querySelector<HTMLButtonElement>("#reset-show")!;
 
 let artwork: Artwork | null = null;
 let paint: PaintState = createEmptyPaint([]);
@@ -179,6 +182,8 @@ let lastTimestamp = performance.now();
 let mode: SignalMode = "fake";
 let shareMode: PaintShareMode = "cover";
 let stage: Stage = "reveal";
+let transitioning = false;
+let cancelTransition: (() => void) | null = null;
 let unsub: (() => void) | null = null;
 
 const future = createFutureStage();
@@ -223,55 +228,103 @@ function showStatus(message: string, kind: "error" | "warn" | "ok" = "ok") {
 }
 
 function updateStageHint() {
+  if (transitioning) {
+    stageHint.textContent = "Transitioning…";
+    return;
+  }
   if (stage === "future") {
     stageHint.textContent =
-      "Future stage (placeholder). Back to Reveal returns to the 2D canvas.";
+      "Future stage (3D). Reveal returns to 2D paint. Reset show clears paint.";
     return;
   }
-  if (!artwork) {
-    stageHint.textContent =
-      "Load artwork to paint. Force Future skips unlock for testing.";
-    return;
-  }
-  const pct = Math.round(minReveal(paint) * 100);
-  stageHint.textContent = `Reveal progress ${pct}% · unlocks Future at ~82%.`;
+  stageHint.textContent =
+    "Reveal stage (2D paint). Future opens the 3D scene — manual switch only.";
 }
 
-function setStage(next: Stage, reason: "auto" | "force" | "back" = "force") {
-  if (next === stage) {
+function syncStageButtons() {
+  forceFutureBtn.classList.toggle("is-active", stage === "future");
+  forceFutureBtn.classList.toggle("secondary", stage !== "future");
+  backRevealBtn.classList.toggle("is-active", stage === "reveal");
+  backRevealBtn.classList.toggle("secondary", stage !== "reveal");
+  forceFutureBtn.disabled = transitioning;
+  backRevealBtn.disabled = transitioning;
+  resetShowBtn.disabled = transitioning;
+}
+
+function enterFuture() {
+  if (stage === "future" || transitioning) return;
+  cancelTransition?.();
+  transitioning = true;
+  syncStageButtons();
+  stageLabel.textContent = "transition";
+  updateStageHint();
+
+  futureHost.hidden = false;
+  future.mount(futureHost);
+  showStatus("Crossing to Future stage…", "ok");
+
+  cancelTransition = runStageTransition(canvasWrap, "to-future", () => {
+    transitioning = false;
+    cancelTransition = null;
+    stage = "future";
+    canvasWrap.dataset.stage = "future";
+    stageLabel.textContent = "future";
+    syncStageButtons();
     updateStageHint();
+    showStatus("Future stage (stub city)", "ok");
+  });
+}
+
+function returnToReveal(opts: { resetPaint: boolean; reason: "back" | "reset" }) {
+  if (transitioning) return;
+
+  const finishReveal = () => {
+    transitioning = false;
+    cancelTransition = null;
+    stage = "reveal";
+    canvasWrap.dataset.stage = "reveal";
+    stageLabel.textContent = "reveal";
+    future.unmount();
+    futureHost.hidden = true;
+    if (opts.resetPaint && artwork) {
+      paint = createEmptyPaint(artwork.regions);
+    }
+    syncStageButtons();
+    updateStageHint();
+    showStatus(
+      opts.reason === "reset"
+        ? "Show reset — white canvas for next visitors"
+        : artwork
+          ? ""
+          : "Load an SVG or image to start. For real BLE use Bridge.",
+      opts.reason === "reset" ? "ok" : artwork ? "ok" : "warn",
+    );
+  };
+
+  if (stage !== "future") {
+    finishReveal();
     return;
   }
 
-  stage = next;
-  canvasWrap.dataset.stage = next;
-  stageLabel.textContent = next;
-
-  if (next === "future") {
-    future.mount(futureHost);
-    showStatus(
-      reason === "auto"
-        ? "Palette complete — entered Future stage"
-        : "Force Future — stub city (swap for GLB later)",
-      "ok",
-    );
-  } else {
-    future.unmount();
-    if (reason === "back") {
-      showStatus(
-        artwork
-          ? ""
-          : "Load an SVG or image to start. For real BLE use Bridge.",
-        artwork ? "ok" : "warn",
-      );
-    }
-  }
-
-  forceFutureBtn.classList.toggle("is-active", next === "future");
-  forceFutureBtn.classList.toggle("secondary", next !== "future");
-  backRevealBtn.classList.toggle("is-active", next === "reveal");
-  backRevealBtn.classList.toggle("secondary", next !== "reveal");
+  cancelTransition?.();
+  transitioning = true;
+  syncStageButtons();
+  stageLabel.textContent = "transition";
   updateStageHint();
+  futureHost.hidden = false;
+
+  cancelTransition = runStageTransition(canvasWrap, "to-reveal", finishReveal);
+}
+
+function setStage(next: Stage, reason: "force" | "back" | "reset" = "force") {
+  if (next === "future") {
+    enterFuture();
+    return;
+  }
+  returnToReveal({
+    resetPaint: reason === "reset" || reason === "back",
+    reason: reason === "reset" ? "reset" : "back",
+  });
 }
 
 function applyArtwork(next: Artwork) {
@@ -279,6 +332,9 @@ function applyArtwork(next: Artwork) {
   paint = createEmptyPaint(next.regions);
   artNameEl.textContent = `${next.name} · ${listPaintNumbers(next.regions).length} paints · ${next.mode}`;
   renderPalette();
+  if (stage === "future" || transitioning) {
+    returnToReveal({ resetPaint: false, reason: "back" });
+  }
   if (next.warnings.length) {
     showStatus(next.warnings.join(" · "), "warn");
   } else if (mode === "fake" && stage === "reveal") {
@@ -376,6 +432,10 @@ backRevealBtn.addEventListener("click", () => {
   setStage("reveal", "back");
 });
 
+resetShowBtn.addEventListener("click", () => {
+  setStage("reveal", "reset");
+});
+
 document.querySelector("#bridge-connect")!.addEventListener("click", () => {
   if (mode !== "bridge") return;
   bridge.connect();
@@ -422,8 +482,11 @@ document
   .addEventListener("click", () => fake.walkPast());
 
 function resetPaint() {
+  if (stage === "future" || transitioning) {
+    setStage("reveal", "reset");
+    return;
+  }
   if (artwork) paint = createEmptyPaint(artwork.regions);
-  if (stage === "future") setStage("reveal", "back");
   updateStageHint();
 }
 document.querySelector("#reset")!.addEventListener("click", resetPaint);
@@ -459,8 +522,7 @@ setModeUi("fake");
 stage = "reveal";
 canvasWrap.dataset.stage = "reveal";
 stageLabel.textContent = "reveal";
-forceFutureBtn.classList.add("secondary");
-backRevealBtn.classList.add("is-active");
+syncStageButtons();
 updateStageHint();
 bindSource(fake);
 fake.start();
@@ -523,8 +585,12 @@ function frame(ts: number) {
 
   const vibe = computeVibe(sightings, DEVICE_CAP, nearRssi);
 
-  if (stage === "reveal") {
-    if (artwork) {
+  if (stage === "reveal" || transitioning) {
+    if (
+      artwork &&
+      (stage === "reveal" ||
+        canvasWrap.dataset.transition?.startsWith("to-future"))
+    ) {
       updatePaint(
         paint,
         artwork.regions,
@@ -534,9 +600,13 @@ function frame(ts: number) {
         shareMode,
       );
       drawArtwork(ctx, artwork, paint, vibe);
-      updateStageHint();
     }
-  } else {
+  }
+
+  if (
+    stage === "future" ||
+    canvasWrap.dataset.transition?.startsWith("to-future")
+  ) {
     future.tick(differenceTime, vibe);
   }
 
