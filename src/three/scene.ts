@@ -6,8 +6,10 @@ import { frameCameraToObject } from './frameCamera'
 import { FUTURE_MODEL_URL, loadFutureModel } from './loadModel'
 import { createMeshReveal, MESH_COLOR_COMPLETE } from './meshReveal'
 
+const WHITE_BG = new THREE.Color(0xffffff)
 const DAY_BG = new THREE.Color(0xc5d4e0)
 const NIGHT_BG = new THREE.Color(0x0e1218)
+const WHITE_FOG = new THREE.Color(0xffffff)
 const DAY_FOG = new THREE.Color(0xb8c8d4)
 const NIGHT_FOG = new THREE.Color(0x0e1218)
 
@@ -58,7 +60,7 @@ export function createFutureScene(): FutureScene {
 
   const reveal = createMeshReveal()
   const tmpBg = new THREE.Color()
-  const tmpFog = new THREE.Color()
+  const tmpMood = new THREE.Color()
 
   function fitToCanvas() {
     if (!camera || !modelRoot) return
@@ -102,17 +104,28 @@ export function createFutureScene(): FutureScene {
     const t = Math.max(0, Math.min(1, warmth))
     warmthSmoothed += (t - warmthSmoothed) * 0.08
 
-    tmpBg.copy(DAY_BG).lerp(NIGHT_BG, warmthSmoothed)
-    tmpFog.copy(DAY_FOG).lerp(NIGHT_FOG, warmthSmoothed)
+    // Stay white canvas until color paint starts; contour alone keeps white bg
+    const colorAmt = Math.min(1, reveal.minReveal / 0.35)
+    tmpMood.copy(DAY_BG).lerp(NIGHT_BG, warmthSmoothed)
+    tmpBg.copy(WHITE_BG).lerp(tmpMood, colorAmt)
     scene.background = tmpBg
     if (scene.fog instanceof THREE.Fog) {
-      scene.fog.color.copy(tmpFog)
+      tmpMood.copy(DAY_FOG).lerp(NIGHT_FOG, warmthSmoothed)
+      scene.fog.color.copy(WHITE_FOG).lerp(tmpMood, colorAmt)
     }
 
-    hemi.intensity = 0.95 - warmthSmoothed * 0.4
-    key.intensity = 1.15 - warmthSmoothed * 0.3
-    key.color.setHex(warmthSmoothed > 0.45 ? 0xffd4a8 : 0xfff2e0)
-    fill.intensity = 0.22 + warmthSmoothed * 0.18
+    // Soft even light while inking so gray reads as contour, not lit sculpture
+    const inking = reveal.minContour > 0.01 && colorAmt < 0.5
+    hemi.intensity = inking
+      ? 1.2
+      : 1.05 - warmthSmoothed * 0.35 * colorAmt
+    key.intensity = inking ? 0.35 : 1.05 - warmthSmoothed * 0.25 * colorAmt
+    key.color.setHex(
+      colorAmt > 0.4 && warmthSmoothed > 0.45 ? 0xffd4a8 : 0xffffff,
+    )
+    fill.intensity = inking
+      ? 0.05
+      : 0.12 + (0.22 + warmthSmoothed * 0.18) * colorAmt
     accent.intensity = animWeight * warmthSmoothed * 1.8
   }
 
@@ -202,8 +215,8 @@ export function createFutureScene(): FutureScene {
       host.hidden = false
 
       scene = new THREE.Scene()
-      scene.background = DAY_BG.clone()
-      scene.fog = new THREE.Fog(DAY_FOG.getHex(), 2, 20)
+      scene.background = WHITE_BG.clone()
+      scene.fog = new THREE.Fog(WHITE_FOG.getHex(), 2, 20)
 
       camera = new THREE.PerspectiveCamera(40, 1, 0.05, 100)
       camera.position.copy(heroPos)

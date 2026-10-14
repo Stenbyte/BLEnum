@@ -132,7 +132,7 @@ body {
 #future-host {
   position: absolute;
   inset: 0;
-  background: #0e1218;
+  background: #ffffff;
   overflow: hidden;
   opacity: 0;
   transition: opacity 1.1s ease;
