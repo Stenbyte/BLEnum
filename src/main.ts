@@ -271,7 +271,7 @@ function enterFuture() {
     stageLabel.textContent = "future";
     syncStageButtons();
     updateStageHint();
-    showStatus("Future stage (stub city)", "ok");
+    showStatus("Future stage — loading model…", "ok");
   });
 }
 
