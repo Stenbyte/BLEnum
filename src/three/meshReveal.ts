@@ -1,8 +1,14 @@
 import * as THREE from 'three'
 import {
   assignPaintsToDevices,
+  DEVICE_CAP,
   type PaintShareMode,
 } from '../art/regions'
+import {
+  colorKeyFromThree,
+  readTexturePixels,
+  regroupGeometryByPaint,
+} from './texturePaints'
 
 /** Same bar as 2D photo blend — mesh “colored enough”. */
 export const MESH_COLOR_COMPLETE = 0.82
@@ -31,16 +37,18 @@ type MaterialSlot = {
   maps: MapSlot[]
 }
 
-type MeshRevealEntry = {
+/** One paintable region = one material (texture color cluster or mat slot). */
+type PaintEntry = {
   mesh: THREE.Mesh
   paintNumber: number
-  slots: MaterialSlot[]
+  slot: MaterialSlot
   contour: number
   reveal: number
 }
 
 /**
- * Per-mesh reveal like 2D: blank white → ink contours → color.
+ * Per-region reveal like 2D: blank white → ink → color.
+ * Paint slots come from materials / texture color regions (not whole meshes).
  */
 export type MeshRevealController = {
   reset: (root: THREE.Object3D) => void
@@ -52,10 +60,9 @@ export type MeshRevealController = {
     breathByDeviceId: Map<string, number>,
   ) => number
   readonly colorComplete: boolean
-  /** Min color reveal 0–1 (contours alone do not count). */
   readonly minReveal: number
-  /** Min of contour progress — drives early mood / visibility. */
   readonly minContour: number
+  /** Paint region count (materials / texture clusters). */
   readonly meshCount: number
 }
 
@@ -110,17 +117,25 @@ function restoreMaps(mat: THREE.MeshStandardMaterial, maps: MapSlot[]): void {
   for (const { key, tex } of maps) mat[key] = tex
 }
 
-/**
- * contour 0 + reveal 0 → invisible (true white canvas).
- * contour up → gray ink silhouette.
- * reveal up → original paint + textures.
- */
+function makeSlot(clone: THREE.MeshStandardMaterial): MaterialSlot {
+  return {
+    material: clone,
+    baseColor: clone.color.clone(),
+    baseEmissive: clone.emissive.clone(),
+    baseEmissiveIntensity: clone.emissiveIntensity,
+    baseOpacity: clone.opacity,
+    baseTransparent: clone.transparent,
+    baseRoughness: clone.roughness,
+    baseMetalness: clone.metalness,
+    maps: collectMaps(clone),
+  }
+}
+
 function applyStage(slot: MaterialSlot, contour: number, reveal: number): void {
   const mat = slot.material
   const visible = Math.max(contour, reveal)
 
   if (visible < 0.01) {
-    // Blank canvas — nothing drawn
     mat.color.copy(WHITE)
     mat.emissive.setRGB(0, 0, 0)
     mat.emissiveIntensity = 0
@@ -135,7 +150,6 @@ function applyStage(slot: MaterialSlot, contour: number, reveal: number): void {
   }
 
   if (reveal < 0.02) {
-    // Contour / ink only — flat gray form, no textures
     mat.color.copy(INK)
     mat.emissive.setRGB(0, 0, 0)
     mat.emissiveIntensity = 0
@@ -146,7 +160,6 @@ function applyStage(slot: MaterialSlot, contour: number, reveal: number): void {
     mat.metalness = 0
     stripMaps(mat)
   } else {
-    // Color paint over ink
     mat.color.copy(INK).lerp(slot.baseColor, reveal)
     mat.emissive.copy(slot.baseEmissive).multiplyScalar(reveal)
     mat.emissiveIntensity = slot.baseEmissiveIntensity * reveal
@@ -155,8 +168,7 @@ function applyStage(slot: MaterialSlot, contour: number, reveal: number): void {
       Math.min(1, 0.55 + contour * 0.2 + reveal * 0.45)
     mat.transparent = slot.baseTransparent || mat.opacity < 0.99
     mat.depthWrite = mat.opacity > 0.85
-    mat.roughness =
-      1 + (slot.baseRoughness - 1) * reveal
+    mat.roughness = 1 + (slot.baseRoughness - 1) * reveal
     mat.metalness = slot.baseMetalness * reveal
     if (reveal > 0.15) restoreMaps(mat, slot.maps)
     else stripMaps(mat)
@@ -165,8 +177,86 @@ function applyStage(slot: MaterialSlot, contour: number, reveal: number): void {
   mat.needsUpdate = true
 }
 
+/**
+ * Turn one mesh into one-or-more paint materials (texture clusters when possible).
+ */
+function paintsForMesh(
+  mesh: THREE.Mesh,
+  ensurePaint: (key: string) => number,
+): PaintEntry[] {
+  const rawList = Array.isArray(mesh.material)
+    ? mesh.material
+    : [mesh.material]
+  const geo = mesh.geometry
+  if (!geo) return []
+
+  const multi =
+    rawList.length > 1 && geo.groups.length >= rawList.length
+
+  // Multi-material mesh: one paint per existing material slot (shared by color key)
+  if (multi) {
+    const slots: MaterialSlot[] = []
+    const entries: PaintEntry[] = []
+    rawList.forEach((raw, i) => {
+      const clone = toStandardClone(raw)
+      if (!clone) return
+      // One Crowd slot per material on this mesh
+      const key = `mesh:${mesh.uuid}:mat:${i}:${clone.name || colorKeyFromThree(clone.color)}`
+
+      const slot = makeSlot(clone)
+      applyStage(slot, 0, 0)
+      slots.push(slot)
+      entries.push({
+        mesh,
+        paintNumber: ensurePaint(key),
+        slot,
+        contour: 0,
+        reveal: 0,
+      })
+    })
+    if (slots.length === 0) return []
+    mesh.material = slots.length === 1 ? slots[0].material : slots.map((s) => s.material)
+    mesh.visible = false
+    return entries
+  }
+
+  // Single material: split faces by texture color regions (zombie path)
+  const raw = rawList[0]
+  const baseClone = toStandardClone(raw)
+  if (!baseClone) return []
+
+  const mapPixels = readTexturePixels(baseClone.map)
+  const solidKey = colorKeyFromThree(baseClone.color)
+  const regionKeys = regroupGeometryByPaint(geo, {
+    mapPixels,
+    solidKey,
+    maxPaints: DEVICE_CAP,
+  })
+
+  const slots: MaterialSlot[] = []
+  const entries: PaintEntry[] = []
+  for (const regionKey of regionKeys) {
+    const clone = baseClone.clone()
+    const slot = makeSlot(clone)
+    applyStage(slot, 0, 0)
+    slots.push(slot)
+    entries.push({
+      mesh,
+      paintNumber: ensurePaint(regionKey),
+      slot,
+      contour: 0,
+      reveal: 0,
+    })
+  }
+
+  mesh.material =
+    slots.length === 1 ? slots[0].material : slots.map((s) => s.material)
+  mesh.visible = false
+  return entries
+}
+
 export function createMeshReveal(): MeshRevealController {
-  let entries: MeshRevealEntry[] = []
+  let entries: PaintEntry[] = []
   let minReveal = 0
   let minContour = 0
 
@@ -192,53 +282,25 @@ export function createMeshReveal(): MeshRevealController {
       entries = []
       minReveal = 0
       minContour = 0
+
+      const keyToPaint = new Map<string, number>()
+      const ensurePaint = (key: string): number => {
+        let n = keyToPaint.get(key)
+        if (n === undefined) {
+          n = keyToPaint.size + 1
+          keyToPaint.set(key, n)
+        }
+        return n
+      }
+
       const meshes: THREE.Mesh[] = []
       root.traverse((obj) => {
         if (obj instanceof THREE.Mesh) meshes.push(obj)
       })
 
-      meshes.forEach((mesh, index) => {
-        const list = Array.isArray(mesh.material)
-          ? mesh.material
-          : [mesh.material]
-        const slots: MaterialSlot[] = []
-
-        for (const raw of list) {
-          const clone = toStandardClone(raw)
-          if (!clone) continue
-          const maps = collectMaps(clone)
-          slots.push({
-            material: clone,
-            baseColor: clone.color.clone(),
-            baseEmissive: clone.emissive.clone(),
-            baseEmissiveIntensity: clone.emissiveIntensity,
-            baseOpacity: clone.opacity,
-            baseTransparent: clone.transparent,
-            baseRoughness: clone.roughness,
-            baseMetalness: clone.metalness,
-            maps,
-          })
-          applyStage(slots[slots.length - 1], 0, 0)
-        }
-
-        if (slots.length === 0) return
-
-        mesh.material =
-          slots.length === 1
-            ? slots[0].material
-            : slots.map((s) => s.material)
-
-        // Hide until first contour — avoids one-frame flash of gray
-        mesh.visible = false
-
-        entries.push({
-          mesh,
-          paintNumber: index + 1,
-          slots,
-          contour: 0,
-          reveal: 0,
-        })
-      })
+      for (const mesh of meshes) {
+        entries.push(...paintsForMesh(mesh, ensurePaint))
+      }
     },
     tick(dt, nearKeys, shareMode, breathByDeviceId) {
       if (entries.length === 0) {
@@ -247,7 +309,9 @@ export function createMeshReveal(): MeshRevealController {
         return 0
       }
 
-      const paintNumbers = entries.map((e) => e.paintNumber)
+      const paintNumbers = [
+        ...new Set(entries.map((e) => e.paintNumber)),
+      ].sort((a, b) => a - b)
       const assigned = assignPaintsToDevices(nearKeys, paintNumbers, shareMode)
 
       const energy = new Map<number, number>()
@@ -260,8 +324,10 @@ export function createMeshReveal(): MeshRevealController {
         }
       }
 
+      const meshLive = new Map<THREE.Mesh, boolean>()
       let minR = 1
       let minC = 1
+
       for (const entry of entries) {
         const live = energy.get(entry.paintNumber)
         if (live !== undefined && live > 0) {
@@ -278,12 +344,19 @@ export function createMeshReveal(): MeshRevealController {
           }
         }
 
-        entry.mesh.visible = entry.contour > 0.01 || entry.reveal > 0.01
-        for (const slot of entry.slots) {
-          applyStage(slot, entry.contour, entry.reveal)
+        applyStage(entry.slot, entry.contour, entry.reveal)
+        if (entry.contour > 0.01 || entry.reveal > 0.01) {
+          meshLive.set(entry.mesh, true)
+        } else if (!meshLive.has(entry.mesh)) {
+          meshLive.set(entry.mesh, false)
         }
+
         minR = Math.min(minR, entry.reveal)
         minC = Math.min(minC, entry.contour)
+      }
+
+      for (const [mesh, live] of meshLive) {
+        mesh.visible = live
       }
 
       minReveal = entries.length ? minR : 0

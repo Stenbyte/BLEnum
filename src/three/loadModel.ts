@@ -3,6 +3,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 
 /** Current test model in public/models/ */
 export const FUTURE_MODEL_URL = '/models/Aero_Airship_01.glb'
+export const FUTURE_MODEL_URL_2 = '/models/zombie.glb'
 
 export type LoadedFutureModel = {
   root: THREE.Group
@@ -13,7 +14,7 @@ export type LoadedFutureModel = {
  * Load a GLB, center at origin, normalize scale so framing is stable.
  */
 export async function loadFutureModel(
-  url = FUTURE_MODEL_URL,
+  url = FUTURE_MODEL_URL_2,
 ): Promise<LoadedFutureModel> {
   const loader = new GLTFLoader()
   const gltf = await loader.loadAsync(url)
