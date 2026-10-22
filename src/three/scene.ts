@@ -3,8 +3,15 @@ import type { PaintShareMode } from '../art/regions'
 import type { VibeState } from '../vibe/map'
 import { disposeObject3D } from './dispose'
 import { frameCameraToObject, WAVE_VIEW_DIR } from './frameCamera'
-import { FUTURE_MODEL_URL, loadFutureModel } from './loadModel'
+import {
+  FUTURE_MODEL_URL,
+  loadFutureModel,
+  loadRunnerModel,
+} from './loadModel'
 import { createMeshReveal, MESH_COLOR_COMPLETE } from './meshReveal'
+
+/** World units / sec along the quay. */
+const RUNNER_SPEED = 0.12
 
 const WHITE_BG = new THREE.Color(0xffffff)
 /** Wave photo — pale hazy sky */
@@ -43,9 +50,11 @@ export function createFutureScene(): FutureScene {
   let camera: THREE.PerspectiveCamera | null = null
   let scene: THREE.Scene | null = null
   let modelRoot: THREE.Group | null = null
+  let runnerRoot: THREE.Group | null = null
   let water: THREE.Mesh | null = null
   let waterMat: THREE.MeshStandardMaterial | null = null
   let mixer: THREE.AnimationMixer | null = null
+  let runnerMixer: THREE.AnimationMixer | null = null
   let hemi: THREE.HemisphereLight | null = null
   let key: THREE.DirectionalLight | null = null
   let fill: THREE.DirectionalLight | null = null
@@ -60,9 +69,16 @@ export function createFutureScene(): FutureScene {
   let animWeight = 0
   let baseY = 0
   let baseRotY = 0
+  let runnerTravel = 0
 
   const heroPos = new THREE.Vector3(0, 1, 3)
   const heroTarget = new THREE.Vector3(0, 0, 0)
+  const quayA = new THREE.Vector3()
+  const quayB = new THREE.Vector3()
+  const tmpDir = new THREE.Vector3()
+  const raycaster = new THREE.Raycaster()
+  const rayOrigin = new THREE.Vector3()
+  const rayDown = new THREE.Vector3(0, -1, 0)
 
   const reveal = createMeshReveal()
   const tmpBg = new THREE.Color()
@@ -111,6 +127,127 @@ export function createFutureScene(): FutureScene {
     }
 
     layoutWater()
+    layoutQuay()
+  }
+
+  type DeckHit = { y: number; normalY: number }
+
+  /** First solid hit under (x,z); prefer flat-ish faces (deck). */
+  function probeDeck(x: number, z: number, box: THREE.Box3): DeckHit | null {
+    if (!modelRoot) return null
+    const spanY = Math.max(box.max.y - box.min.y, 0.01)
+    rayOrigin.set(x, box.max.y + spanY * 0.25, z)
+    raycaster.set(rayOrigin, rayDown)
+    const hits = raycaster.intersectObject(modelRoot, true)
+    if (hits.length === 0) return null
+
+    const quayMax = box.min.y + spanY * 0.45
+    let best: DeckHit | null = null
+    for (const hit of hits) {
+      if (hit.point.y > quayMax) continue
+      const ny = hit.face
+        ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld).y
+        : 1
+      // Prefer upward faces (plank tops), skip vertical quay front
+      if (ny < 0.45) continue
+      if (!best || ny > best.normalY) {
+        best = { y: hit.point.y, normalY: ny }
+      }
+    }
+    return best
+  }
+
+  /**
+   * Quay path: search depth toward camera for real plank tops,
+   * not the outer AABB (that put runner in empty air past the lip).
+   */
+  function layoutQuay() {
+    if (!modelRoot) return
+    const box = new THREE.Box3().setFromObject(modelRoot)
+    const size = new THREE.Vector3()
+    const center = new THREE.Vector3()
+    box.getSize(size)
+    box.getCenter(center)
+
+    const towardCam = WAVE_VIEW_DIR.clone()
+    towardCam.y = 0
+    if (towardCam.lengthSq() < 0.001) towardCam.set(0, 0, 1)
+    else towardCam.normalize()
+
+    const extent =
+      Math.abs(towardCam.x) * (size.x * 0.5) +
+      Math.abs(towardCam.z) * (size.z * 0.5)
+
+    const alongX = size.x >= size.z
+    const half = (alongX ? size.x : size.z) * 0.34
+
+    // Probe mid-quay depths (skip outer lip — empty air / vertical face)
+    const depthFracs = [0.35, 0.42, 0.5, 0.58, 0.66, 0.74]
+    let bestDepth = extent * 0.01
+    let bestScore = -1
+    for (const frac of depthFracs) {
+      const depth = extent * frac
+      const mx = center.x + towardCam.x * depth
+      const mz = center.z + towardCam.z * depth
+      const hit = probeDeck(mx, mz, box)
+      if (!hit) continue
+      const score = hit.normalY * 2 + hit.y
+      if (score > bestScore) {
+        bestScore = score
+        bestDepth = depth
+      }
+    }
+
+    if (alongX) {
+      quayA.set(center.x - half, 0, center.z)
+      quayB.set(center.x + half, 0, center.z)
+    } else {
+      quayA.set(center.x, 0, center.z - half)
+      quayB.set(center.x, 0, center.z + half)
+    }
+    quayA.addScaledVector(towardCam, bestDepth)
+    quayB.addScaledVector(towardCam, bestDepth)
+
+    const hitA = probeDeck(quayA.x, quayA.z, box)
+    const hitB = probeDeck(quayB.x, quayB.z, box)
+    const fallbackY = box.min.y + Math.max(size.y * 0.08, 0.02)
+    quayA.y = (hitA?.y ?? fallbackY) + 0.001
+    quayB.y = (hitB?.y ?? fallbackY) + 0.001
+  }
+
+  function tickRunner(dt: number, show: boolean) {
+    if (!runnerRoot || !modelRoot) return
+    runnerRoot.visible = show
+    if (!show) return
+
+    const len = Math.max(
+      0.01,
+      Math.hypot(quayB.x - quayA.x, quayB.z - quayA.z),
+    )
+    runnerTravel += dt * RUNNER_SPEED
+    const cycle = len * 2
+    let d = runnerTravel % cycle
+    let forward = true
+    if (d > len) {
+      d = cycle - d
+      forward = false
+    }
+    const t = d / len
+    runnerRoot.position.x = quayA.x + (quayB.x - quayA.x) * t
+    runnerRoot.position.z = quayA.z + (quayB.z - quayA.z) * t
+
+    const box = new THREE.Box3().setFromObject(modelRoot)
+    const hit = probeDeck(runnerRoot.position.x, runnerRoot.position.z, box)
+    runnerRoot.position.y =
+      (hit?.y ?? quayA.y * (1 - t) + quayB.y * t) + 0.001
+
+    if (forward) tmpDir.set(quayB.x - quayA.x, 0, quayB.z - quayA.z)
+    else tmpDir.set(quayA.x - quayB.x, 0, quayA.z - quayB.z)
+    if (tmpDir.lengthSq() > 1e-6) {
+      runnerRoot.rotation.y = Math.atan2(tmpDir.x, tmpDir.z)
+    }
+
+    if (runnerMixer) runnerMixer.update(dt)
   }
 
   function ensureWater() {
@@ -199,23 +336,35 @@ export function createFutureScene(): FutureScene {
     lastError = ''
     modelReady = false
     animWeight = 0
+    runnerTravel = 0
     reveal.clear()
     mixer = null
+    runnerMixer = null
     try {
-      const loaded = await loadFutureModel()
+      const [loaded, runner] = await Promise.all([
+        loadFutureModel(),
+        loadRunnerModel(),
+      ])
       if (token !== loadToken || !scene) {
         disposeObject3D(loaded.root)
+        disposeObject3D(runner.root)
         return
       }
       if (modelRoot) {
         scene.remove(modelRoot)
         disposeObject3D(modelRoot)
       }
+      if (runnerRoot) {
+        scene.remove(runnerRoot)
+        disposeObject3D(runnerRoot)
+      }
+
       modelRoot = loaded.root
       baseY = modelRoot.position.y
       baseRotY = modelRoot.rotation.y
       scene.add(modelRoot)
       ensureWater()
+      // Paint reveal only on Wave — not the runner
       reveal.reset(modelRoot)
 
       if (loaded.animations.length > 0) {
@@ -226,6 +375,18 @@ export function createFutureScene(): FutureScene {
           action.setEffectiveWeight(0)
           action.paused = true
         }
+      }
+
+      runnerRoot = runner.root
+      runnerRoot.visible = false
+      scene.add(runnerRoot)
+      runnerMixer = new THREE.AnimationMixer(runnerRoot)
+      const runClip =
+        runner.animations.find((c) => /run/i.test(c.name)) ??
+        runner.animations[0]
+      if (runClip) {
+        const action = runnerMixer.clipAction(runClip)
+        action.play()
       }
 
       modelReady = true
@@ -331,12 +492,14 @@ export function createFutureScene(): FutureScene {
       resizeObs = null
       reveal.clear()
       mixer = null
+      runnerMixer = null
 
       if (renderer) {
         renderer.dispose()
         renderer.domElement.remove()
       }
       if (modelRoot) disposeObject3D(modelRoot)
+      if (runnerRoot) disposeObject3D(runnerRoot)
       if (water) disposeObject3D(water)
       if (host) {
         host.innerHTML = ''
@@ -348,6 +511,7 @@ export function createFutureScene(): FutureScene {
       camera = null
       scene = null
       modelRoot = null
+      runnerRoot = null
       water = null
       waterMat = null
       hemi = null
@@ -360,6 +524,7 @@ export function createFutureScene(): FutureScene {
       elapsed = 0
       warmthSmoothed = 0
       animWeight = 0
+      runnerTravel = 0
       baseY = 0
       baseRotY = 0
     },
@@ -396,6 +561,10 @@ export function createFutureScene(): FutureScene {
         mixer.update(dt)
         mixer.timeScale = animWeight
       }
+
+      // Runner appears once color starts; loops along quay
+      const showRunner = reveal.minReveal > 0.08
+      tickRunner(dt, showRunner)
 
       renderer.render(scene, camera)
     },
