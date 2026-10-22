@@ -110,14 +110,35 @@ export function createFutureScene(): FutureScene {
     }
 
     if (key) {
+      // High sun — warm daylight from above / camera side
+      const dist = heroPos.distanceTo(heroTarget)
       key.position.set(
-        heroTarget.x + 2,
-        heroTarget.y + 4,
-        heroTarget.z + 2,
+        heroTarget.x + dist * 0.55,
+        heroTarget.y + dist * 1.1,
+        heroTarget.z + dist * 0.35,
+      )
+      key.target.position.copy(heroTarget)
+      key.target.updateMatrixWorld()
+      const shadowSpan = dist * 1.4
+      key.shadow.camera.left = -shadowSpan
+      key.shadow.camera.right = shadowSpan
+      key.shadow.camera.top = shadowSpan
+      key.shadow.camera.bottom = -shadowSpan
+      key.shadow.camera.near = dist * 0.2
+      key.shadow.camera.far = dist * 4
+      key.shadow.camera.updateProjectionMatrix()
+    }
+    if (fill) {
+      const dist = heroPos.distanceTo(heroTarget)
+      fill.position.set(
+        heroTarget.x - dist * 0.5,
+        heroTarget.y + dist * 0.35,
+        heroTarget.z - dist * 0.25,
       )
     }
     if (accent) {
-      accent.position.copy(heroTarget).add(new THREE.Vector3(0, 0.4, 0.6))
+      // Soft rim / bounce near quay
+      accent.position.copy(heroTarget).add(new THREE.Vector3(0, 0.15, 0.4))
     }
 
     layoutWater()
@@ -303,15 +324,17 @@ export function createFutureScene(): FutureScene {
       waterMat.needsUpdate = true
     }
 
-    // Soft even light while inking so gray reads as contour, not lit sculpture
+    // Soft flat light while inking; full daylight sun after color
     const inking = reveal.minContour > 0.01 && colorAmt < 0.5
-    hemi.intensity = inking ? 1.2 : 1.05
-    hemi.color.setHex(0xb9cfe0)
+    hemi.intensity = inking ? 1.15 : 0.75
+    hemi.color.setHex(0xd0e6f5)
     hemi.groundColor.copy(WATER_DAY)
-    key.intensity = inking ? 0.35 : 1.05
-    key.color.setHex(0xfff8f0)
-    fill.intensity = inking ? 0.05 : 0.22
-    accent.intensity = 0
+    key.intensity = inking ? 0.4 : 2.1
+    key.color.setHex(0xffe2b0) // warm sun
+    fill.intensity = inking ? 0.08 : 0.45
+    fill.color.setHex(0xb3d0ea) // cool sky bounce
+    accent.intensity = inking ? 0 : 0.55
+    accent.color.setHex(0xfff0d0)
   }
 
   async function attachModel(token: number) {
@@ -436,25 +459,30 @@ export function createFutureScene(): FutureScene {
       renderer.shadowMap.enabled = true
       renderer.shadowMap.type = THREE.PCFSoftShadowMap
       renderer.outputColorSpace = THREE.SRGBColorSpace
+      renderer.toneMapping = THREE.ACESFilmicToneMapping
+      renderer.toneMappingExposure = 1.2
       renderer.domElement.style.display = 'block'
       renderer.domElement.style.width = '100%'
       renderer.domElement.style.height = '100%'
       host.appendChild(renderer.domElement)
 
-      hemi = new THREE.HemisphereLight(0xb9cfe0, 0x6a848c, 0.95)
+      hemi = new THREE.HemisphereLight(0xd0e6f5, 0x6a848c, 0.75)
       scene.add(hemi)
 
-      key = new THREE.DirectionalLight(0xfff2e0, 1.15)
-      key.position.set(2, 4, 2)
+      key = new THREE.DirectionalLight(0xffe2b0, 2.1)
+      key.position.set(3, 6, 2)
       key.castShadow = true
-      key.shadow.mapSize.set(1024, 1024)
+      key.shadow.mapSize.set(2048, 2048)
+      key.shadow.bias = -0.0002
+      key.shadow.normalBias = 0.02
       scene.add(key)
+      scene.add(key.target)
 
-      fill = new THREE.DirectionalLight(0x6a8cff, 0.22)
-      fill.position.set(-2, 1.5, -1)
+      fill = new THREE.DirectionalLight(0xb3d0ea, 0.45)
+      fill.position.set(-3, 2, -1)
       scene.add(fill)
 
-      accent = new THREE.PointLight(0xff8a3d, 0, 8, 2)
+      accent = new THREE.PointLight(0xfff0d0, 0.55, 12, 2)
       accent.position.set(0, 0.5, 0.5)
       scene.add(accent)
 
