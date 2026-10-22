@@ -2,19 +2,23 @@ import * as THREE from 'three'
 import type { PaintShareMode } from '../art/regions'
 import type { VibeState } from '../vibe/map'
 import { disposeObject3D } from './dispose'
-import { frameCameraToObject } from './frameCamera'
+import { frameCameraToObject, WAVE_VIEW_DIR } from './frameCamera'
 import { FUTURE_MODEL_URL, loadFutureModel } from './loadModel'
 import { createMeshReveal, MESH_COLOR_COMPLETE } from './meshReveal'
 
 const WHITE_BG = new THREE.Color(0xffffff)
-const DAY_BG = new THREE.Color(0xc5d4e0)
+/** Wave photo — pale hazy sky */
+const DAY_BG = new THREE.Color(0xb9cfe0)
 const NIGHT_BG = new THREE.Color(0x0e1218)
 const WHITE_FOG = new THREE.Color(0xffffff)
-const DAY_FOG = new THREE.Color(0xb8c8d4)
+const DAY_FOG = new THREE.Color(0xa8c0d0)
 const NIGHT_FOG = new THREE.Color(0x0e1218)
+/** Wave fjord — muted slate green-blue */
+const WATER_DAY = new THREE.Color(0x6a848c)
+const WATER_NIGHT = new THREE.Color(0x1a2428)
 
-/** Padding so model sits inside the canvas with a little air around it. */
-const FRAME_PADDING = 1.28
+/** Padding so Wave sits in frame with air for sky / water. */
+const FRAME_PADDING = 1.42
 
 export type FutureTickInput = {
   shareMode: PaintShareMode
@@ -39,6 +43,8 @@ export function createFutureScene(): FutureScene {
   let camera: THREE.PerspectiveCamera | null = null
   let scene: THREE.Scene | null = null
   let modelRoot: THREE.Group | null = null
+  let water: THREE.Mesh | null = null
+  let waterMat: THREE.MeshStandardMaterial | null = null
   let mixer: THREE.AnimationMixer | null = null
   let hemi: THREE.HemisphereLight | null = null
   let key: THREE.DirectionalLight | null = null
@@ -61,6 +67,7 @@ export function createFutureScene(): FutureScene {
   const reveal = createMeshReveal()
   const tmpBg = new THREE.Color()
   const tmpMood = new THREE.Color()
+  const tmpWater = new THREE.Color()
 
   function fitToCanvas() {
     if (!camera || !modelRoot) return
@@ -74,9 +81,14 @@ export function createFutureScene(): FutureScene {
       camera,
       modelRoot,
       FRAME_PADDING,
+      WAVE_VIEW_DIR,
     )
     heroPos.copy(framed.position)
+    // Aim a touch below center so more sky sits above the roofline
     heroTarget.copy(framed.target)
+    heroTarget.y -= framed.position.distanceTo(framed.target) * 0.04
+    camera.position.copy(heroPos)
+    camera.lookAt(heroTarget)
 
     modelRoot.rotation.y = savedRot
     modelRoot.position.y = savedY
@@ -97,6 +109,48 @@ export function createFutureScene(): FutureScene {
     if (accent) {
       accent.position.copy(heroTarget).add(new THREE.Vector3(0, 0.4, 0.6))
     }
+
+    layoutWater()
+  }
+
+  function ensureWater() {
+    if (!scene || water) return
+    const geo = new THREE.PlaneGeometry(1, 1, 1, 1)
+    waterMat = new THREE.MeshStandardMaterial({
+      color: WATER_DAY.clone(),
+      roughness: 0.28,
+      metalness: 0.22,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+    })
+    water = new THREE.Mesh(geo, waterMat)
+    water.name = 'wave-water'
+    water.rotation.x = -Math.PI / 2
+    water.receiveShadow = true
+    water.visible = false
+    scene.add(water)
+  }
+
+  function layoutWater() {
+    if (!water || !modelRoot) return
+    const box = new THREE.Box3().setFromObject(modelRoot)
+    const size = new THREE.Vector3()
+    const center = new THREE.Vector3()
+    box.getSize(size)
+    box.getCenter(center)
+
+    const span = Math.max(size.x, size.z, 0.5) * 10
+    water.scale.set(span, span, 1)
+    // Sit just under the building feet
+    water.position.set(center.x, box.min.y - size.y * 0.01, center.z)
+    // Pull plane toward camera so more fjord fills the foreground
+    const towardCam = WAVE_VIEW_DIR.clone()
+    towardCam.y = 0
+    if (towardCam.lengthSq() > 0.001) {
+      towardCam.normalize()
+      water.position.addScaledVector(towardCam, span * 0.18)
+    }
   }
 
   function applyMood(warmth: number) {
@@ -104,7 +158,7 @@ export function createFutureScene(): FutureScene {
     const t = Math.max(0, Math.min(1, warmth))
     warmthSmoothed += (t - warmthSmoothed) * 0.08
 
-    // Stay white canvas until color paint starts; contour alone keeps white bg
+    // Stay white canvas until color paint starts; then Wave sky + water
     const colorAmt = Math.min(1, reveal.minReveal / 0.35)
     tmpMood.copy(DAY_BG).lerp(NIGHT_BG, warmthSmoothed)
     tmpBg.copy(WHITE_BG).lerp(tmpMood, colorAmt)
@@ -114,14 +168,25 @@ export function createFutureScene(): FutureScene {
       scene.fog.color.copy(WHITE_FOG).lerp(tmpMood, colorAmt)
     }
 
+    if (waterMat && water) {
+      tmpWater.copy(WATER_DAY).lerp(WATER_NIGHT, warmthSmoothed)
+      waterMat.color.copy(tmpWater)
+      waterMat.opacity = colorAmt * 0.92
+      waterMat.depthWrite = waterMat.opacity > 0.5
+      water.visible = colorAmt > 0.02
+      waterMat.needsUpdate = true
+    }
+
     // Soft even light while inking so gray reads as contour, not lit sculpture
     const inking = reveal.minContour > 0.01 && colorAmt < 0.5
     hemi.intensity = inking
       ? 1.2
       : 1.05 - warmthSmoothed * 0.35 * colorAmt
+    hemi.color.setHex(0xb9cfe0)
+    hemi.groundColor.copy(WATER_DAY).lerp(WATER_NIGHT, warmthSmoothed)
     key.intensity = inking ? 0.35 : 1.05 - warmthSmoothed * 0.25 * colorAmt
     key.color.setHex(
-      colorAmt > 0.4 && warmthSmoothed > 0.45 ? 0xffd4a8 : 0xffffff,
+      colorAmt > 0.4 && warmthSmoothed > 0.45 ? 0xffd4a8 : 0xfff8f0,
     )
     fill.intensity = inking
       ? 0.05
@@ -150,6 +215,7 @@ export function createFutureScene(): FutureScene {
       baseY = modelRoot.position.y
       baseRotY = modelRoot.rotation.y
       scene.add(modelRoot)
+      ensureWater()
       reveal.reset(modelRoot)
 
       if (loaded.animations.length > 0) {
@@ -231,7 +297,7 @@ export function createFutureScene(): FutureScene {
       renderer.domElement.style.height = '100%'
       host.appendChild(renderer.domElement)
 
-      hemi = new THREE.HemisphereLight(0xb8c8e0, 0x2a241c, 0.95)
+      hemi = new THREE.HemisphereLight(0xb9cfe0, 0x6a848c, 0.95)
       scene.add(hemi)
 
       key = new THREE.DirectionalLight(0xfff2e0, 1.15)
@@ -271,6 +337,7 @@ export function createFutureScene(): FutureScene {
         renderer.domElement.remove()
       }
       if (modelRoot) disposeObject3D(modelRoot)
+      if (water) disposeObject3D(water)
       if (host) {
         host.innerHTML = ''
         host.hidden = true
@@ -281,6 +348,8 @@ export function createFutureScene(): FutureScene {
       camera = null
       scene = null
       modelRoot = null
+      water = null
+      waterMat = null
       hemi = null
       key = null
       fill = null
@@ -313,23 +382,14 @@ export function createFutureScene(): FutureScene {
 
       applyMood(vibe.warmth)
 
-      // Soft camera bob (small so model stays framed)
-      const dist = heroPos.distanceTo(heroTarget)
-      const bob = Math.sin(elapsed * 0.35) * dist * 0.008 * Math.max(0.2, animWeight)
-      camera.position.set(heroPos.x, heroPos.y + bob, heroPos.z)
+      // Locked hero angle — no bob (still postcard)
+      camera.position.copy(heroPos)
       camera.lookAt(heroTarget)
 
+      // Still pose — no spin / float (Wave building stays fixed)
       if (modelRoot) {
-        if (animWeight > 0.01) {
-          // Gentle motion — keep inside frame
-          const spin = (0.08 + vibe.warmth * 0.12) * animWeight
-          modelRoot.rotation.y = baseRotY + elapsed * spin
-          modelRoot.position.y =
-            baseY + Math.sin(elapsed * 0.7) * dist * 0.012 * animWeight
-        } else {
-          modelRoot.rotation.y = baseRotY
-          modelRoot.position.y = baseY
-        }
+        modelRoot.rotation.y = baseRotY
+        modelRoot.position.y = baseY
       }
 
       if (mixer) {

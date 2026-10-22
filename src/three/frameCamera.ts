@@ -1,14 +1,17 @@
 import * as THREE from 'three'
 
+/** Wave / architecture: mostly front, clearly from above. */
+export const WAVE_VIEW_DIR = new THREE.Vector3(0.12, 0.55, 1.0)
+
 /**
  * Fit a perspective camera so `object` fills the view with padding.
- * Uses a fixed viewing direction (front-right-up) for a stable hero angle.
+ * Default viewDir = Wave hero angle (front + elevated).
  */
 export function frameCameraToObject(
   camera: THREE.PerspectiveCamera,
   object: THREE.Object3D,
   padding = 1.35,
-  viewDir = new THREE.Vector3(0.55, 0.32, 0.78),
+  viewDir: THREE.Vector3 = WAVE_VIEW_DIR,
 ): { position: THREE.Vector3; target: THREE.Vector3 } {
   const box = new THREE.Box3().setFromObject(object)
   const size = new THREE.Vector3()
