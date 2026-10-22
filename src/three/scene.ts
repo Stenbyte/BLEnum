@@ -14,15 +14,12 @@ import { createMeshReveal, MESH_COLOR_COMPLETE } from './meshReveal'
 const RUNNER_SPEED = 0.12
 
 const WHITE_BG = new THREE.Color(0xffffff)
-/** Wave photo — pale hazy sky */
+/** Wave photo — pale hazy sky (day only, no night mood). */
 const DAY_BG = new THREE.Color(0xb9cfe0)
-const NIGHT_BG = new THREE.Color(0x0e1218)
 const WHITE_FOG = new THREE.Color(0xffffff)
 const DAY_FOG = new THREE.Color(0xa8c0d0)
-const NIGHT_FOG = new THREE.Color(0x0e1218)
 /** Wave fjord — muted slate green-blue */
 const WATER_DAY = new THREE.Color(0x6a848c)
-const WATER_NIGHT = new THREE.Color(0x1a2428)
 
 /** Padding so Wave sits in frame with air for sky / water. */
 const FRAME_PADDING = 1.42
@@ -65,7 +62,6 @@ export function createFutureScene(): FutureScene {
   let lastError = ''
   let loadToken = 0
   let elapsed = 0
-  let warmthSmoothed = 0
   let animWeight = 0
   let baseY = 0
   let baseRotY = 0
@@ -82,8 +78,6 @@ export function createFutureScene(): FutureScene {
 
   const reveal = createMeshReveal()
   const tmpBg = new THREE.Color()
-  const tmpMood = new THREE.Color()
-  const tmpWater = new THREE.Color()
 
   function fitToCanvas() {
     if (!camera || !modelRoot) return
@@ -290,24 +284,19 @@ export function createFutureScene(): FutureScene {
     }
   }
 
-  function applyMood(warmth: number) {
+  function applyMood(_warmth: number) {
     if (!scene || !hemi || !key || !fill || !accent) return
-    const t = Math.max(0, Math.min(1, warmth))
-    warmthSmoothed += (t - warmthSmoothed) * 0.08
 
-    // Stay white canvas until color paint starts; then Wave sky + water
+    // Stay white canvas until color paint starts; then day sky + water
     const colorAmt = Math.min(1, reveal.minReveal / 0.35)
-    tmpMood.copy(DAY_BG).lerp(NIGHT_BG, warmthSmoothed)
-    tmpBg.copy(WHITE_BG).lerp(tmpMood, colorAmt)
+    tmpBg.copy(WHITE_BG).lerp(DAY_BG, colorAmt)
     scene.background = tmpBg
     if (scene.fog instanceof THREE.Fog) {
-      tmpMood.copy(DAY_FOG).lerp(NIGHT_FOG, warmthSmoothed)
-      scene.fog.color.copy(WHITE_FOG).lerp(tmpMood, colorAmt)
+      scene.fog.color.copy(WHITE_FOG).lerp(DAY_FOG, colorAmt)
     }
 
     if (waterMat && water) {
-      tmpWater.copy(WATER_DAY).lerp(WATER_NIGHT, warmthSmoothed)
-      waterMat.color.copy(tmpWater)
+      waterMat.color.copy(WATER_DAY)
       waterMat.opacity = colorAmt * 0.92
       waterMat.depthWrite = waterMat.opacity > 0.5
       water.visible = colorAmt > 0.02
@@ -316,19 +305,13 @@ export function createFutureScene(): FutureScene {
 
     // Soft even light while inking so gray reads as contour, not lit sculpture
     const inking = reveal.minContour > 0.01 && colorAmt < 0.5
-    hemi.intensity = inking
-      ? 1.2
-      : 1.05 - warmthSmoothed * 0.35 * colorAmt
+    hemi.intensity = inking ? 1.2 : 1.05
     hemi.color.setHex(0xb9cfe0)
-    hemi.groundColor.copy(WATER_DAY).lerp(WATER_NIGHT, warmthSmoothed)
-    key.intensity = inking ? 0.35 : 1.05 - warmthSmoothed * 0.25 * colorAmt
-    key.color.setHex(
-      colorAmt > 0.4 && warmthSmoothed > 0.45 ? 0xffd4a8 : 0xfff8f0,
-    )
-    fill.intensity = inking
-      ? 0.05
-      : 0.12 + (0.22 + warmthSmoothed * 0.18) * colorAmt
-    accent.intensity = animWeight * warmthSmoothed * 1.8
+    hemi.groundColor.copy(WATER_DAY)
+    key.intensity = inking ? 0.35 : 1.05
+    key.color.setHex(0xfff8f0)
+    fill.intensity = inking ? 0.05 : 0.22
+    accent.intensity = 0
   }
 
   async function attachModel(token: number) {
@@ -483,7 +466,6 @@ export function createFutureScene(): FutureScene {
       resize()
       mounted = true
       elapsed = 0
-      warmthSmoothed = 0
       animWeight = 0
     },
     unmount() {
@@ -522,7 +504,6 @@ export function createFutureScene(): FutureScene {
       modelReady = false
       lastError = ''
       elapsed = 0
-      warmthSmoothed = 0
       animWeight = 0
       runnerTravel = 0
       baseY = 0
