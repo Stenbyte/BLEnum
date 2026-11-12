@@ -556,11 +556,10 @@ export function createFutureScene(): FutureScene {
 
       applyMood(vibe.warmth)
 
-      // Locked hero angle — no bob (still postcard)
+      // Locked hero angle — no orbit
       camera.position.copy(heroPos)
       camera.lookAt(heroTarget)
 
-      // Still pose — no spin / float (Wave building stays fixed)
       if (modelRoot) {
         modelRoot.rotation.y = baseRotY
         modelRoot.position.y = baseY
