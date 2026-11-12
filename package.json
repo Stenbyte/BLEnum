@@ -8,12 +8,14 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "bridge": "bash bridge/start.sh",
-    "bridge:install": "python3 -m pip install --user -r bridge/requirements.txt",
-    "bridge:node": "npm --prefix bridge start",
-    "bridge:node:install": "npm --prefix bridge install"
+    "bridge:install": "bash bridge/install-deps.sh"
   },
   "devDependencies": {
-    "typescript": "~5.9.3",
-    "vite": "^7.1.7"
+    "@types/three": "0.186.0",
+    "typescript": "5.9.3",
+    "vite": "7.1.7"
+  },
+  "dependencies": {
+    "three": "0.186.1"
   }
 }

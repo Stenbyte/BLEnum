@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start the BLEnum BLE bridge (Python/bleak preferred on macOS).
+# Start the BLEnum BLE bridge (Python / bleak).
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -10,7 +10,7 @@ fi
 
 if ! python3 -c "import bleak, websockets" 2>/dev/null; then
   echo "[bridge] Installing Python deps (bleak, websockets)…"
-  python3 -m pip install --user -r requirements.txt
+  bash "$(dirname "$0")/install-deps.sh"
 fi
 
 exec env PYTHONUNBUFFERED=1 python3 server.py
