@@ -13,8 +13,10 @@ const WHITE_FOG = new THREE.Color(0xffffff)
 const DAY_FOG = new THREE.Color(0xa8c0d0)
 const GROUND_DAY = new THREE.Color(0x6a848c)
 
-/** Padding so cityscape sits in frame with air for sky. */
-const FRAME_PADDING = 1.42
+/** Lower = closer / more zoomed in. */
+const FRAME_PADDING = 1.05
+/** Slow Y spin (rad / sec). */
+const SPIN_RAD_PER_SEC = 0.18
 
 export type FutureTickInput = {
   shareMode: PaintShareMode
@@ -53,6 +55,7 @@ export function createFutureScene(): FutureScene {
   let animWeight = 0
   let baseY = 0
   let baseRotY = 0
+  let spinY = 0
 
   const heroPos = new THREE.Vector3(0, 1, 3)
   const heroTarget = new THREE.Vector3(0, 0, 0)
@@ -167,6 +170,7 @@ export function createFutureScene(): FutureScene {
       modelRoot = loaded.root
       baseY = modelRoot.position.y
       baseRotY = modelRoot.rotation.y
+      spinY = 0
       scene.add(modelRoot)
       reveal.reset(modelRoot)
 
@@ -314,6 +318,7 @@ export function createFutureScene(): FutureScene {
       animWeight = 0
       baseY = 0
       baseRotY = 0
+      spinY = 0
     },
     resize,
     tick(dt, vibe, input) {
@@ -334,12 +339,13 @@ export function createFutureScene(): FutureScene {
 
       applyMood(vibe.warmth)
 
-      // Locked hero angle — no orbit
+      // Locked hero camera; model spins in place
       camera.position.copy(heroPos)
       camera.lookAt(heroTarget)
 
       if (modelRoot) {
-        modelRoot.rotation.y = baseRotY
+        spinY += dt * SPIN_RAD_PER_SEC
+        modelRoot.rotation.y = baseRotY + spinY
         modelRoot.position.y = baseY
       }
 

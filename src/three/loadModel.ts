@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 
 /** Drop the cityscape GLB here when ready. */
-export const FUTURE_MODEL_URL = '/models/vejle.glb'
+export const FUTURE_MODEL_URL = '/models/vejleTest.glb'
 
 export type LoadedFutureModel = {
   root: THREE.Group
