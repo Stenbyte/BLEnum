@@ -1,11 +1,10 @@
 # 3D models
 
-Future stage loads:
+Future stage loads one cityscape GLB:
 
 ```
-public/models/Aero_Airship_01.glb
+public/models/vejle.glb
 ```
 
-Swap the filename in `src/three/loadModel.ts` (`FUTURE_MODEL_URL`) when you change assets.
-
-Keep models light (low-poly) for smooth show playback.
+URL is set in `src/three/loadModel.ts` (`FUTURE_MODEL_URL`).
+Drop the file here when ready — keep it light (low-poly) for smooth show playback.
