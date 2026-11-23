@@ -14,9 +14,9 @@ const DAY_FOG = new THREE.Color(0xa8c0d0)
 const GROUND_DAY = new THREE.Color(0x6a848c)
 
 /** Lower = closer / more zoomed in. */
-const FRAME_PADDING = 1.05
+const FRAME_PADDING = 0.8
 /** Slow Y spin (rad / sec). */
-const SPIN_RAD_PER_SEC = 0.18
+const SPIN_RAD_PER_SEC = 0.1
 
 export type FutureTickInput = {
   shareMode: PaintShareMode
@@ -141,7 +141,7 @@ export function createFutureScene(): FutureScene {
     hemi.intensity = inking ? 1.15 : 0.75
     hemi.color.setHex(0xd0e6f5)
     hemi.groundColor.copy(GROUND_DAY)
-    key.intensity = inking ? 0.4 : 2.1
+    key.intensity = inking ? 0.4 : 0.8
     key.color.setHex(0xffe2b0) // warm sun
     fill.intensity = inking ? 0.08 : 0.45
     fill.color.setHex(0xb3d0ea) // cool sky bounce

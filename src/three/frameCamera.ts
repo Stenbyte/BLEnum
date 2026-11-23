@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 
 /** Wave / architecture: mostly front, clearly from above. */
-export const WAVE_VIEW_DIR = new THREE.Vector3(0.12, 0.55, 1.0)
+export const WAVE_VIEW_DIR = new THREE.Vector3(8.0, 1.0, 7.0)
 
 /**
  * Fit a perspective camera so `object` fills the view with padding.
